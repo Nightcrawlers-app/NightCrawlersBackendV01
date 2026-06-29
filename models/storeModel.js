@@ -50,7 +50,8 @@ const StoreSchema = new mongoose.Schema(
 
 
 StoreSchema.index({ coordinates: '2dsphere' });
-StoreSchema.index({ address: 'text', name: 'text', categories: 1 });
+StoreSchema.index({ address: 'text', name: 'text', });
+StoreSchema.index({ categories: 1 });
 
 /**
  * Returns 'open' | 'closed' | '24hrs'

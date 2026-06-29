@@ -7,15 +7,9 @@ const AddressSchema = new mongoose.Schema({
   city: { type: String, required: true },
   isDefault: { type: Boolean, default: false },
   coordinates: {
-    type: { 
-      type: String, 
-      enum: ['Point'], 
-      default: 'Point' 
-    },
-    coordinates: { 
-      type: [Number], 
-      default: null}, // [longitude, latitude]
-  },
+    type: { type: String, enum: ['Point']},
+    coordinates: { type: [Number]},
+}
 });
 
 const UserSchema = new mongoose.Schema(
@@ -46,8 +40,8 @@ const UserSchema = new mongoose.Schema(
     avatar: { type: String, default: null },
     location: { type: String, default: 'Abuja, Nigeria' },
     coordinates: {
-      type: { type: String, enum: ['Point'], default: 'Point' },
-      coordinates: { type: [Number], default: null }, // [longitude, latitude]
+      type: { type: String, enum: ['Point']},
+      coordinates: { type: [Number]}, // [longitude, latitude]
     },
     addresses: [AddressSchema],
     favoriteVendors: [{ type: String }],
@@ -79,7 +73,7 @@ const UserSchema = new mongoose.Schema(
   { timestamps: { createdAt: 'joinedDate', updatedAt: true } }
 );
 
-UserSchema.index({ coordinates: '2dsphere' });
+UserSchema.index({ coordinates: '2dsphere' }, { sparse: true });
 
 UserSchema.pre('save', async function (next) {
   if (!this.isModified('password')) return next();

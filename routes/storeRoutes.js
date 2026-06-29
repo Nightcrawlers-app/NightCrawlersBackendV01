@@ -112,8 +112,8 @@ router.post('/', protect, requireRole('vendor'), async (req, res) => {
       address,
       description: description || '',
       imageUrl,
-      openingTime: openingTime || '',
-      closingTime: closingTime || '',
+      openingTime: openingTime || { hour: 0, minute: 0 },
+      closingTime: closingTime || { hour: 0, minute: 0 },
       coordinates: {
         type: 'Point',
         coordinates: [ finalLng, finalLat ],
@@ -129,11 +129,14 @@ router.post('/', protect, requireRole('vendor'), async (req, res) => {
 // PATCH /api/stores/:id — update store details (owner or admin only)
 router.patch('/:id', protect, assertStoreOwnership, async (req, res) => {
   try {
-    const allowed = ['name', 'categories', 'address', 'description', 'imageUrl', 'openingTime', 'closingTime', 'lat', 'lng'];
+    const allowed = ['name', 'categories', 'address', 'description', 'imageUrl', 'lat', 'lng'];
     const updates = {};
     for (const key of allowed) {
       if (req.body[key] !== undefined) updates[key] = req.body[key];
     }
+
+    if (req.body.openingTime) updates.openingTime = req.body.openingTime;
+    if (req.body.closingTime) updates.closingTime = req.body.closingTime;
 
     // Allow updating coordinates if lat/lng provided
     if (req.body.lat && req.body.lng) {
