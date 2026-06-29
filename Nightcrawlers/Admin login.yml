@@ -1,0 +1,21 @@
+info:
+  name: Admin login
+  type: http
+
+http:
+  method: POST
+  url: http://localhost:5000/api/admins/login
+  body:
+    type: json
+    data: |-
+      {
+        "email": "georgia@nightcrawlers.app",
+        "password": "FnZYf+E8rVwlrm6wp7J9g3AC4fB4SkAZWMdtsc27u8cQGBETNw+QswFGvs16zCVqvG+PSmUsuGpe+9EG/lAgIQ=="
+      }
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

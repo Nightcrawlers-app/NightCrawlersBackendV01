@@ -1,0 +1,16 @@
+info:
+  name: User profile
+  type: http
+
+http:
+  method: GET
+  url: http://localhost:5000/api/auth/me
+  auth:
+    type: bearer
+    token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjZhMmU5NjMwNWM4ODdmMjUxNGY3YWI1YSIsInJvbGUiOiJjdXN0b21lciIsImlhdCI6MTc4MTQzOTI2NiwiZXhwIjoxNzg0MDMxMjY2fQ.A2aRS1zKPnkQ9-zIf_oALutck51etjToDMiUuJ9jy74
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

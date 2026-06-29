@@ -1,0 +1,22 @@
+info:
+  name: User verification
+  type: http
+  seq: 1
+
+http:
+  method: POST
+  url: http://localhost:5000/api/auth/verify
+  body:
+    type: json
+    data: |-
+      {
+        "email": "uzogeorgia@gmail.com",
+        "code": "888556"
+      }
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

@@ -1,0 +1,22 @@
+info:
+  name: User signup
+  type: http
+
+http:
+  method: POST
+  url: http://localhost:5000/api/auth/signup
+  body:
+    type: json
+    data: |-
+      {
+        "username": "Test User",
+        "email": "uzogeorgia@gmail.com",
+        "password": "password123"
+      }
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

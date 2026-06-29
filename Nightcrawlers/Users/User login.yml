@@ -1,0 +1,21 @@
+info:
+  name: User login
+  type: http
+
+http:
+  method: POST
+  url: http://localhost:5000/api/auth/login
+  body:
+    type: json
+    data: |-
+      {
+        "email": "uzogeorgia@gmail.com",
+        "password": "password123"
+      }
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
