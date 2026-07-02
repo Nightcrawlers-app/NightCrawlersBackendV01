@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 
-// const connectDB = require('./config/dbConfig');
+const connectDB = require('./config/dbConfig');
 const userAuthRoutes = require('./routes/userAuthRoutes');
 const userRoutes = require('./routes/userRoutes');
 const vendorRoutes = require('./routes/vendorRoutes');
@@ -25,7 +25,7 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '10mb' })); // 10mb to allow base64 image uploads
 
-// connectDB();
+connectDB();
 
 
 app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(swaggerFile));
