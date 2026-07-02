@@ -37,6 +37,13 @@ const UserSchema = new mongoose.Schema(
       type: String, 
       default: '' 
     },
+     // Phone verification fields (optional for customers — not required to log in,
+    // but required before placing an order; see orderRoutes.js)
+    phoneVerified: { type: Boolean, default: false },
+    phoneVerificationCode: { type: String, default: null },
+    phoneVerificationExpiry: { type: Date, default: null },
+    phoneVerificationSentAt: { type: Date, default: null },
+    phoneVerificationAttempts: { type: Number, default: 0 },
     avatar: { type: String, default: null },
     location: { type: String, default: 'Abuja, Nigeria' },
     coordinates: {
@@ -92,6 +99,10 @@ UserSchema.methods.toSafeJSON = function () {
   delete obj.verificationCodeExpiry;
   delete obj.verificationCodeSentAt;
   delete obj.verificationAttempts;
+  delete obj.phoneVerificationCode;
+  delete obj.phoneVerificationExpiry;
+  delete obj.phoneVerificationSentAt;
+  delete obj.phoneVerificationAttempts;
   delete obj.passwordResetCode;
   delete obj.passwordResetExpiry;
   delete obj.passwordResetSentAt;

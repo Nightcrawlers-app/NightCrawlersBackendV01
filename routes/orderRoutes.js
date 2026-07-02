@@ -7,6 +7,17 @@ const { protect, requireRole, optionalAuth } = require('../middlewares/auth');
 // POST /api/orders — create a new order (customer, or guest checkout)
 router.post('/', optionalAuth, async (req, res) => {
   try {
+    // ── Phone verification gate (logged-in customers only) ──────────────
+    if (req.user?.role === 'customer') {
+      const User = require('../models/userModel');
+      const user = await User.findById(req.user.id);
+      if (user && !user.phoneVerified) {
+        return res.status(403).json({
+          message: 'Please verify your phone number or login before placing an order.',
+          needsPhoneVerification: true,
+        });
+      }
+    }
     const {
       storeId,
       storeName,

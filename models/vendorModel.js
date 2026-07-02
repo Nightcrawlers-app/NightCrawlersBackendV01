@@ -10,6 +10,11 @@ const VendorSchema = new mongoose.Schema(
     businessType: { type: String, enum: BUSINESS_TYPES, default: 'Food' },
     businessTypeRaw: { type: String, default: '' },
     phoneNumber: { type: String, default: '' },
+    phoneVerified: { type: Boolean, default: false },
+    phoneVerificationCode: { type: String, default: null },
+    phoneVerificationExpiry: { type: Date, default: null },
+    phoneVerificationSentAt: { type: Date, default: null },
+    phoneVerificationAttempts: { type: Number, default: 0 },
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     password: { type: String, required: true },
     location: { type: String, required: true },
@@ -31,6 +36,10 @@ VendorSchema.methods.comparePassword = function (candidate) {
 VendorSchema.methods.toSafeJSON = function () {
   const obj = this.toObject();
   delete obj.password;
+  delete obj.phoneVerificationCode;
+  delete obj.phoneVerificationExpiry;
+  delete obj.phoneVerificationSentAt;
+  delete obj.phoneVerificationAttempts;
   return obj;
 };
 

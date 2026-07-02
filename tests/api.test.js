@@ -28,6 +28,15 @@ jest.mock('../utils/mailer', () => ({
   sendRiderRejectedEmail: jest.fn().mockResolvedValue(true),
 }));
 
+
+jest.mock('../utils/smsService', () => ({
+  generateCode: () => '654321',
+  normalizePhone: (phone) => phone,
+  sendSms: jest.fn().mockResolvedValue(true),
+  sendPhoneVerificationCode: jest.fn().mockResolvedValue(true),
+  sendPhoneVerifiedConfirmation: jest.fn().mockResolvedValue(true),
+}));
+
 let app;
 
 // ── Setup & teardown ─────────────────────────────────────────────────────────
@@ -39,7 +48,7 @@ beforeAll(async () => {
   process.env.SMTP_FROM = 'test@nightcrawlers.com';
 
   // Import app after env is set
-  app = require('../server');
+  app = require('../app');
 
 // Wait for mongoose to connect
   await new Promise(resolve => setTimeout(resolve, 1000));
@@ -256,6 +265,238 @@ describe('Rider Auth', () => {
   });
 });
 
+//__ Phone Verification_____________________________________________________
+
+describe('Phone Verification', () => {
+  describe('Customer phone verification', () => {
+    it('POST /api/users/me/phone/send sends a code', async () => {
+      const sms = require('../utils/smsService');
+      const reg = await registerUser();
+      await verifyUser(reg.body.email);
+      const login = await request(app)
+        .post('/api/auth/login')
+        .send({ email: reg.body.email, password: 'password123' });
+ 
+      // Add a phone number first since default user has none
+      await request(app)
+        .patch('/api/users/me')
+        .set('Authorization', `Bearer ${login.body.token}`)
+        .send({ phone: '08012345678' });
+ 
+      const res = await request(app)
+        .post('/api/users/me/phone/send')
+        .set('Authorization', `Bearer ${login.body.token}`);
+ 
+      expect(res.status).toBe(200);
+      expect(sms.sendPhoneVerificationCode).toHaveBeenCalled();
+    });
+ 
+    it('POST /api/users/me/phone/send fails if no phone on file', async () => {
+      const reg = await registerUser();
+      await verifyUser(reg.body.email);
+      const login = await request(app)
+        .post('/api/auth/login')
+        .send({ email: reg.body.email, password: 'password123' });
+ 
+      const res = await request(app)
+        .post('/api/users/me/phone/send')
+        .set('Authorization', `Bearer ${login.body.token}`);
+ 
+      expect(res.status).toBe(400);
+    });
+ 
+    it('POST /api/users/me/phone/verify verifies with correct code', async () => {
+      const reg = await registerUser();
+      await verifyUser(reg.body.email);
+      const login = await request(app)
+        .post('/api/auth/login')
+        .send({ email: reg.body.email, password: 'password123' });
+ 
+      await request(app)
+        .patch('/api/users/me')
+        .set('Authorization', `Bearer ${login.body.token}`)
+        .send({ phone: '08012345678' });
+ 
+      await request(app)
+        .post('/api/users/me/phone/send')
+        .set('Authorization', `Bearer ${login.body.token}`);
+ 
+      const res = await request(app)
+        .post('/api/users/me/phone/verify')
+        .set('Authorization', `Bearer ${login.body.token}`)
+        .send({ code: '654321' });
+ 
+      expect(res.status).toBe(200);
+      expect(res.body.account.phoneVerified).toBe(true);
+    });
+ 
+    it('POST /api/users/me/phone/verify rejects wrong code', async () => {
+      const reg = await registerUser();
+      await verifyUser(reg.body.email);
+      const login = await request(app)
+        .post('/api/auth/login')
+        .send({ email: reg.body.email, password: 'password123' });
+ 
+      await request(app)
+        .patch('/api/users/me')
+        .set('Authorization', `Bearer ${login.body.token}`)
+        .send({ phone: '08012345678' });
+ 
+      await request(app)
+        .post('/api/users/me/phone/send')
+        .set('Authorization', `Bearer ${login.body.token}`);
+ 
+      const res = await request(app)
+        .post('/api/users/me/phone/verify')
+        .set('Authorization', `Bearer ${login.body.token}`)
+        .send({ code: '000000' });
+ 
+      expect(res.status).toBe(400);
+    });
+ 
+    it('POST /api/orders is blocked for logged-in customer with unverified phone', async () => {
+      const vendorReg = await registerVendor({ email: 'phonetest-vendor@test.com' });
+      const store = await request(app)
+        .post('/api/stores')
+        .set('Authorization', `Bearer ${vendorReg.body.token}`)
+        .send({ name: 'Phone Test Store', address: 'Abuja', imageUrl: 'https://x.com/img.jpg' });
+ 
+      const userReg = await registerUser({ email: 'phonetest-customer@test.com' });
+      await verifyUser('phonetest-customer@test.com');
+      const login = await request(app)
+        .post('/api/auth/login')
+        .send({ email: 'phonetest-customer@test.com', password: 'password123' });
+ 
+      const res = await request(app)
+        .post('/api/orders')
+        .set('Authorization', `Bearer ${login.body.token}`)
+        .send({
+          storeId: store.body._id,
+          customerName: 'Test Customer',
+          customerPhone: '08012345678',
+          customerAddress: 'Test Address',
+          customerLocation: 'Abuja',
+          items: [{ name: 'Item', quantity: 1, price: 1000 }],
+          deliveryFee: 300,
+        });
+ 
+      expect(res.status).toBe(403);
+      expect(res.body.needsPhoneVerification).toBe(true);
+    });
+ 
+    it('POST /api/orders succeeds for guest checkout regardless of phone verification', async () => {
+      const vendorReg = await registerVendor({ email: 'phonetest-vendor2@test.com' });
+      const store = await request(app)
+        .post('/api/stores')
+        .set('Authorization', `Bearer ${vendorReg.body.token}`)
+        .send({ name: 'Guest Test Store', address: 'Abuja', imageUrl: 'https://x.com/img.jpg' });
+ 
+      const res = await request(app).post('/api/orders').send({
+        storeId: store.body._id,
+        customerName: 'Guest Buyer',
+        customerPhone: '08099998888',
+        customerAddress: 'Guest Address',
+        customerLocation: 'Abuja',
+        items: [{ name: 'Item', quantity: 1, price: 1000 }],
+        deliveryFee: 300,
+      });
+ 
+      expect(res.status).toBe(201);
+    });
+  });
+ 
+  describe('Vendor phone verification', () => {
+    it('POST /api/vendors/me/phone/send and /verify works', async () => {
+      const reg = await registerVendor({ email: 'vendorphone@test.com', phoneNumber: '08011112222' });
+      const token = reg.body.token;
+ 
+      const sendRes = await request(app)
+        .post('/api/vendors/me/phone/send')
+        .set('Authorization', `Bearer ${token}`);
+      expect(sendRes.status).toBe(200);
+ 
+      const verifyRes = await request(app)
+        .post('/api/vendors/me/phone/verify')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ code: '654321' });
+      expect(verifyRes.status).toBe(200);
+      expect(verifyRes.body.account.phoneVerified).toBe(true);
+    });
+ 
+    it('Admin cannot approve vendor with unverified phone', async () => {
+      const { token: adminToken } = await createAdmin();
+      const reg = await registerVendor({ 
+        email: 'unverifiedvendor@test.com',
+        phoneNumber: '08055556666'
+      });
+ 
+      const res = await request(app)
+        .post('/api/admin/verify')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ id: reg.body.vendor._id, type: 'vendor', action: 'approve' });
+ 
+      expect(res.status).toBe(400);
+    });
+ 
+    it('Admin can approve vendor once phone is verified', async () => {
+      const { token: adminToken } = await createAdmin();
+      const reg = await registerVendor({ 
+        email: 'verifiedvendor@test.com',
+        phoneNumber: '08055556666'
+      });
+ 
+      await request(app)
+        .post('/api/vendors/me/phone/send')
+        .set('Authorization', `Bearer ${reg.body.token}`);
+      await request(app)
+        .post('/api/vendors/me/phone/verify')
+        .set('Authorization', `Bearer ${reg.body.token}`)
+        .send({ code: '654321' });
+ 
+      const res = await request(app)
+        .post('/api/admin/verify')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ id: reg.body.vendor._id, type: 'vendor', action: 'approve' });
+ 
+      expect(res.status).toBe(200);
+    });
+  });
+ 
+  describe('Rider phone verification', () => {
+    it('POST /api/riders/me/phone/send and /verify works', async () => {
+      const reg = await registerRider({ email: 'riderphone@test.com', phoneNumber: '08033334444' });
+      const token = reg.body.token;
+ 
+      const sendRes = await request(app)
+        .post('/api/riders/me/phone/send')
+        .set('Authorization', `Bearer ${token}`);
+      expect(sendRes.status).toBe(200);
+ 
+      const verifyRes = await request(app)
+        .post('/api/riders/me/phone/verify')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ code: '654321' });
+      expect(verifyRes.status).toBe(200);
+      expect(verifyRes.body.account.phoneVerified).toBe(true);
+    });
+ 
+    it('Admin cannot approve rider with unverified phone', async () => {
+      const { token: adminToken } = await createAdmin();
+      const reg = await registerRider({ 
+        email: 'unverifiedrider@test.com',
+        phoneNumber: '08033334444'
+      });
+ 
+      const res = await request(app)
+        .post('/api/admin/verify')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ id: reg.body.rider._id, type: 'rider', action: 'approve' });
+ 
+      expect(res.status).toBe(400);
+    });
+  });
+});
+
 // ── Stores ───────────────────────────────────────────────────────────────────
 
 describe('Stores', () => {
@@ -469,8 +710,23 @@ describe('Admin', () => {
   it('POST /api/admin/verify approves vendor and sends email', async () => {
     const mailer = require('../utils/mailer');
     const { token } = await createAdmin();
-    const reg = await registerVendor();
+    const reg = await registerVendor({
+      email: 'approvedvendor@test.com',
+      phoneNumber: '08102589790',
+  
+    });
     const vendorId = reg.body.vendor._id;
+
+
+    await request(app)
+      .post('/api/vendors/me/phone/send')
+      .set('Authorization', `Bearer ${reg.body.token}`);
+
+    await request(app)
+      .post('/api/vendors/me/phone/verify')
+      .set('Authorization', `Bearer ${reg.body.token}`)
+      .send({ code: '654321' });
+
 
     const res = await request(app)
       .post('/api/admin/verify')

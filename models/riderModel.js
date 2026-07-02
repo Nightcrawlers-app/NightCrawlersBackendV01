@@ -7,6 +7,12 @@ const RiderSchema = new mongoose.Schema(
     lastName: { type: String, default: '' },
     vehicleType: { type: String, required: true },
     phoneNumber: { type: String, default: '' },
+    // Phone verification — REQUIRED for riders before admin approval
+    phoneVerified: { type: Boolean, default: false },
+    phoneVerificationCode: { type: String, default: null },
+    phoneVerificationExpiry: { type: Date, default: null },
+    phoneVerificationSentAt: { type: Date, default: null },
+    phoneVerificationAttempts: { type: Number, default: 0 },
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     password: { type: String, required: true },
     location: { type: String, required: true },
@@ -30,6 +36,10 @@ RiderSchema.methods.comparePassword = function (candidate) {
 RiderSchema.methods.toSafeJSON = function () {
   const obj = this.toObject();
   delete obj.password;
+  delete obj.phoneVerificationCode;
+  delete obj.phoneVerificationExpiry;
+  delete obj.phoneVerificationSentAt;
+  delete obj.phoneVerificationAttempts;
   return obj;
 };
 

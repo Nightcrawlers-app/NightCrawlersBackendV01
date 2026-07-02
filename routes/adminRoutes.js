@@ -151,9 +151,26 @@ router.post('/verify', async (req, res) => {
 
     const Model = type === 'vendor' ? Vendor : Rider;
     const entity = await Model.findById(id);
+
+    console.log("VERIFY REQUEST:", req.body);
+    
+    console.log("ENTITY:", {
+      id: entity?._id,
+      phoneVerified: entity?.phoneVerified,
+      verified: entity?.verified,
+      email: entity?.email,
+    });
+
     if (!entity) return res.status(404).json({ message: `${type} not found.` });
 
     if (action === 'approve') {
+      // ── Require phone verification before approval ──────────────────
+      if (!entity.phoneVerified) {
+        console.log("PHONE NOT VERIFIED.");
+        return res.status(400).json({
+          message: `Cannot approve: ${type} has not verified their phone number yet.`,
+        });
+      }
       await Model.findByIdAndUpdate(id, { verified: true });
 
       // Fire approval email
