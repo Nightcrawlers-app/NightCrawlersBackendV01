@@ -7,12 +7,52 @@ const RiderSchema = new mongoose.Schema(
     lastName: { type: String, default: '' },
     vehicleType: { type: String, required: true },
     phoneNumber: { type: String, default: '' },
+
     // Phone verification — REQUIRED for riders before admin approval
     phoneVerified: { type: Boolean, default: false },
     phoneVerificationCode: { type: String, default: null },
     phoneVerificationExpiry: { type: Date, default: null },
     phoneVerificationSentAt: { type: Date, default: null },
     phoneVerificationAttempts: { type: Number, default: 0 },
+
+    bankVerified: { type: Boolean, default: false },
+    bankAccountNumber: { type: String, default: null },
+    bankAccountName: { type: String, default: null },
+    bankCode: { type: String, default: null },
+    bankName: { type: String, default: null },
+    
+    // ── KYC Fields ──────────────────────────────────────────────────────────
+ 
+    // Overall KYC status: 'pending' | 'in_progress' | 'passed' | 'failed'
+    kycStatus: { type: String, enum: ['pending', 'in_progress', 'passed', 'failed'], default: 'pending' },
+ 
+    // NIN Verification (via Prembly)
+    ninVerified: { type: Boolean, default: false },
+    ninNumber: { type: String, default: null },
+    ninData: { type: Object, default: null }, // stores name, DOB, gender from NIMC
+ 
+    // Driver's License Verification (via Prembly)
+    licenseVerified: { type: Boolean, default: false },
+    licenseNumber: { type: String, default: null },
+    licenseData: { type: Object, default: null }, // stores expiry, state, vehicle class
+ 
+    // Selfie / Liveness (via SmileID — deferred)
+    selfieVerified: { type: Boolean, default: false },
+    selfieJobId: { type: String, default: null }, // SmileID job reference
+ 
+    // Residential Address (utility bill — admin reviews manually)
+    addressVerified: { type: Boolean, default: false },
+    addressDocumentUrl: { type: String, default: null }, // uploaded utility bill image URL
+    addressSubmittedAt: { type: Date, default: null },
+    addressReviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin', default: null },
+    addressReviewedAt: { type: Date, default: null },
+ 
+    // Agent in-person visit (for informal vendors — also reused for riders if needed)
+    agentVerified: { type: Boolean, default: false },
+    agentId: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin', default: null },
+    agentVerifiedAt: { type: Date, default: null },
+    agentNotes: { type: String, default: null },
+
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     password: { type: String, required: true },
     location: { type: String, required: true },

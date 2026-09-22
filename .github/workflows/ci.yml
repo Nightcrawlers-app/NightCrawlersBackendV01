@@ -108,6 +108,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+  
 
   # ─── 3. Deploy to EC2/VM (main branch only) ─────────────────────────────────
   deploy:
@@ -118,26 +119,16 @@ jobs:
     environment: production
 
     steps:
-      - name: Deploy via SSH
+      - name: Deploy via SSH (safe deploy with health check + rollback)
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
-            cd /opt/nightcrawlers
-
-            # Pull latest image
             echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            docker pull ghcr.io/${{ github.repository }}:latest
-
-            # Rolling restart (zero-downtime)
-            docker compose pull
-            docker compose up -d --no-deps --force-recreate api
-
-            # Verify container is healthy
-            sleep 10
-            docker compose ps api | grep "Up" || (echo "Deploy failed" && exit 1)
-
-            # Clean up old images
-            docker image prune -f
+            cd /opt/nightcrawlers
+            chmod +x safe-deploy.sh
+            ./safe-deploy.sh
+        
+ 

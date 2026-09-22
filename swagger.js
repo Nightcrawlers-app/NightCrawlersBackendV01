@@ -5,9 +5,13 @@ const doc = {
     title: "NightCrawlers API",
     description: "API documentation",
   },
-  host: "localhost:5000",
-  schemes: ["http"],
-};
+   host: process.env.NODE_ENV === "production"
+    ? "api.nightcrawlers.app"
+    : "localhost:5000",
+  schemes: process.env.NODE_ENV === "production"
+    ? ["https"]
+    : ["http"],
+  };
 
 const outputFile = "./swagger-output.json";
 

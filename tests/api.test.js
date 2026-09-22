@@ -37,6 +37,65 @@ jest.mock('../utils/smsService', () => ({
   sendPhoneVerifiedConfirmation: jest.fn().mockResolvedValue(true),
 }));
 
+
+jest.mock('../utils/paystackService', () => ({
+  resolveAccountNumber: jest.fn().mockResolvedValue({
+    accountName: 'JOHN DOE',
+    accountNumber: '0123456789',
+    bankCode: '058',
+    bankName: 'Guaranty Trust Bank (GTBank)',
+  }),
+  fetchBankList: jest.fn().mockResolvedValue([
+    { name: 'Guaranty Trust Bank (GTBank)', code: '058' },
+    { name: 'Access Bank', code: '044' },
+    { name: 'Zenith Bank', code: '057' },
+  ]),
+  NIGERIAN_BANKS: [
+    { name: 'Guaranty Trust Bank (GTBank)', code: '058' },
+    { name: 'Access Bank', code: '044' },
+  ],
+}));
+
+
+jest.mock('../utils/premblyService', () => ({
+  verifyNIN: jest.fn().mockResolvedValue({
+    verified: true,
+    nin: '12345678901',
+    firstName: 'John',
+    lastName: 'Doe',
+    middleName: 'A',
+    dateOfBirth: '1990-01-01',
+    gender: 'Male',
+    phone: '08012345678',
+  }),
+  verifyDriversLicense: jest.fn().mockResolvedValue({
+    verified: true,
+    licenseNumber: 'ABC123456789',
+    firstName: 'John',
+    lastName: 'Doe',
+    expiryDate: '2028-01-01',
+    stateOfIssue: 'Lagos',
+    vehicleClass: 'B',
+  }),
+  verifyCAC: jest.fn().mockResolvedValue({
+    verified: true,
+    rcNumber: '123456',
+    companyName: 'Test Company Ltd',
+    companyStatus: 'Active',
+    registrationDate: '2020-01-01',
+    companyType: 'Private Limited',
+    address: '1 Test Street, Lagos',
+  }),
+  verifyTIN: jest.fn().mockResolvedValue({
+    verified: true,
+    tin: '12345678-0001',
+    taxpayerName: 'Test Company Ltd',
+    taxOffice: 'Lagos',
+    phone: '08012345678',
+    email: 'test@company.com',
+  }),
+}));
+
 let app;
 
 // ── Setup & teardown ─────────────────────────────────────────────────────────
@@ -437,14 +496,15 @@ describe('Phone Verification', () => {
  
       expect(res.status).toBe(400);
     });
- 
+
     it('Admin can approve vendor once phone is verified', async () => {
       const { token: adminToken } = await createAdmin();
-      const reg = await registerVendor({ 
+      const reg = await registerVendor({
         email: 'verifiedvendor@test.com',
         phoneNumber: '08055556666'
       });
- 
+
+      // Phone verify
       await request(app)
         .post('/api/vendors/me/phone/send')
         .set('Authorization', `Bearer ${reg.body.token}`);
@@ -452,12 +512,26 @@ describe('Phone Verification', () => {
         .post('/api/vendors/me/phone/verify')
         .set('Authorization', `Bearer ${reg.body.token}`)
         .send({ code: '654321' });
- 
+      
+      // KYC — declare formal, verify CAC + TIN
+      await request(app)
+        .post('/api/vendors/me/kyc/declare')
+        .set('Authorization', `Bearer ${reg.body.token}`)
+        .send({ isInformalVendor: false });
+      await request(app)
+        .post('/api/vendors/me/kyc/cac')
+        .set('Authorization', `Bearer ${reg.body.token}`)
+        .send({ rcNumber: 'RC123456' });
+      await request(app)
+        .post('/api/vendors/me/kyc/tin')
+        .set('Authorization', `Bearer ${reg.body.token}`)
+        .send({ tin: '12345678-0001' });
+
       const res = await request(app)
         .post('/api/admin/verify')
         .set('Authorization', `Bearer ${adminToken}`)
         .send({ id: reg.body.vendor._id, type: 'vendor', action: 'approve' });
- 
+
       expect(res.status).toBe(200);
     });
   });
@@ -717,7 +791,7 @@ describe('Admin', () => {
     });
     const vendorId = reg.body.vendor._id;
 
-
+    //Phone verify
     await request(app)
       .post('/api/vendors/me/phone/send')
       .set('Authorization', `Bearer ${reg.body.token}`);
@@ -726,6 +800,20 @@ describe('Admin', () => {
       .post('/api/vendors/me/phone/verify')
       .set('Authorization', `Bearer ${reg.body.token}`)
       .send({ code: '654321' });
+
+    // KYC
+    await request(app)
+      .post('/api/vendors/me/kyc/declare')
+      .set('Authorization', `Bearer ${reg.body.token}`)
+      .send({ isInformalVendor: false });
+    await request(app)
+      .post('/api/vendors/me/kyc/cac')
+      .set('Authorization', `Bearer ${reg.body.token}`)
+      .send({ rcNumber: 'RC123456' });
+   await request(app)
+      .post('/api/vendors/me/kyc/tin')
+      .set('Authorization', `Bearer ${reg.body.token}`)
+      .send({ tin: '12345678-0001' });
 
 
     const res = await request(app)
@@ -784,5 +872,437 @@ describe('Password Reset', () => {
       .send({ email: 'user@test.com', password: 'newpass456' });
     expect(login.status).toBe(200);
     expect(login.body.token).toBeDefined();
+  });
+});
+
+
+describe('Bank Verification', () => {
+  describe('Vendor bank verification', () => {
+    let vendorToken;
+    let vendorId;
+
+    beforeEach(async () => {
+      const reg = await registerVendor({ email: 'bankvendor@test.com', phoneNumber: '08012345678' });
+      vendorToken = reg.body.token;
+      vendorId = reg.body.vendor._id;
+    });
+
+    it('GET /api/vendors/me/bank/banks returns bank list', async () => {
+      const res = await request(app)
+        .get('/api/vendors/me/bank/banks')
+        .set('Authorization', `Bearer ${vendorToken}`);
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body)).toBe(true);
+      expect(res.body[0]).toHaveProperty('name');
+      expect(res.body[0]).toHaveProperty('code');
+    });
+
+    it('GET /api/vendors/me/bank returns unverified state initially', async () => {
+      const res = await request(app)
+        .get('/api/vendors/me/bank')
+        .set('Authorization', `Bearer ${vendorToken}`);
+      expect(res.status).toBe(200);
+      expect(res.body.bankVerified).toBe(false);
+    });
+
+    it('POST /api/vendors/me/bank/resolve returns account name', async () => {
+      const res = await request(app)
+        .post('/api/vendors/me/bank/resolve')
+        .set('Authorization', `Bearer ${vendorToken}`)
+        .send({ accountNumber: '0123456789', bankCode: '058' });
+      expect(res.status).toBe(200);
+      expect(res.body.accountName).toBe('JOHN DOE');
+    });
+
+    it('POST /api/vendors/me/bank/resolve returns 400 for invalid format', async () => {
+      const res = await request(app)
+        .post('/api/vendors/me/bank/resolve')
+        .set('Authorization', `Bearer ${vendorToken}`)
+        .send({ accountNumber: '123', bankCode: '058' });
+      expect(res.status).toBe(400);
+    });
+
+    it('POST /api/vendors/me/bank/save saves verified bank details', async () => {
+      const res = await request(app)
+        .post('/api/vendors/me/bank/save')
+        .set('Authorization', `Bearer ${vendorToken}`)
+        .send({ accountNumber: '0123456789', bankCode: '058' });
+      expect(res.status).toBe(200);
+      expect(res.body.bankVerified).toBe(true);
+      expect(res.body.bankAccountName).toBe('JOHN DOE');
+      expect(res.body.bankAccountNumber).toBe('******6789');
+    });
+
+    it('GET /api/vendors/me/bank returns verified details after saving', async () => {
+      await request(app)
+        .post('/api/vendors/me/bank/save')
+        .set('Authorization', `Bearer ${vendorToken}`)
+        .send({ accountNumber: '0123456789', bankCode: '058' });
+
+      const res = await request(app)
+        .get('/api/vendors/me/bank')
+        .set('Authorization', `Bearer ${vendorToken}`);
+      expect(res.body.bankVerified).toBe(true);
+      expect(res.body.bankAccountNumber).toBe('******6789');
+    });
+
+    it('POST /api/vendors/me/bank/remove clears bank details', async () => {
+      await request(app)
+        .post('/api/vendors/me/bank/save')
+        .set('Authorization', `Bearer ${vendorToken}`)
+        .send({ accountNumber: '0123456789', bankCode: '058' });
+
+      await request(app)
+        .post('/api/vendors/me/bank/remove')
+        .set('Authorization', `Bearer ${vendorToken}`);
+
+      const check = await request(app)
+        .get('/api/vendors/me/bank')
+        .set('Authorization', `Bearer ${vendorToken}`);
+      expect(check.body.bankVerified).toBe(false);
+    });
+
+    it('GET /api/vendors/:id/earnings blocked without bank verification', async () => {
+      const res = await request(app)
+        .get(`/api/vendors/${vendorId}/earnings`)
+        .set('Authorization', `Bearer ${vendorToken}`);
+      expect(res.status).toBe(403);
+      expect(res.body.needsBankVerification).toBe(true);
+    });
+
+    it('GET /api/vendors/:id/earnings succeeds after bank verification', async () => {
+      await request(app)
+        .post('/api/vendors/me/bank/save')
+        .set('Authorization', `Bearer ${vendorToken}`)
+        .send({ accountNumber: '0123456789', bankCode: '058' });
+
+      const res = await request(app)
+        .get(`/api/vendors/${vendorId}/earnings`)
+        .set('Authorization', `Bearer ${vendorToken}`);
+      expect(res.status).toBe(200);
+    });
+  });
+
+  describe('Rider bank verification', () => {
+    let riderToken;
+    let riderId;
+
+    beforeEach(async () => {
+      const reg = await registerRider({ email: 'bankrider@test.com', phoneNumber: '08099998888' });
+      riderToken = reg.body.token;
+      riderId = reg.body.rider._id;
+    });
+
+    it('POST /api/riders/me/bank/save saves verified bank details', async () => {
+      const res = await request(app)
+        .post('/api/riders/me/bank/save')
+        .set('Authorization', `Bearer ${riderToken}`)
+        .send({ accountNumber: '0123456789', bankCode: '044' });
+      expect(res.status).toBe(200);
+      expect(res.body.bankVerified).toBe(true);
+    });
+
+    it('GET /api/riders/:id/earnings blocked without bank verification', async () => {
+      const res = await request(app)
+        .get(`/api/riders/${riderId}/earnings`)
+        .set('Authorization', `Bearer ${riderToken}`);
+      expect(res.status).toBe(403);
+      expect(res.body.needsBankVerification).toBe(true);
+    });
+
+    it('GET /api/riders/:id/earnings succeeds after bank verification', async () => {
+      await request(app)
+        .post('/api/riders/me/bank/save')
+        .set('Authorization', `Bearer ${riderToken}`)
+        .send({ accountNumber: '0123456789', bankCode: '044' });
+
+      const res = await request(app)
+        .get(`/api/riders/${riderId}/earnings`)
+        .set('Authorization', `Bearer ${riderToken}`);
+      expect(res.status).toBe(200);
+    });
+
+    it('Rider cannot access vendor bank endpoint', async () => {
+      const res = await request(app)
+        .get('/api/vendors/me/bank')
+        .set('Authorization', `Bearer ${riderToken}`);
+      expect(res.status).toBe(403);
+    });
+  });
+});
+
+describe('KYC Verification', () => {
+  // ── Rider KYC ────────────────────────────────────────────────────────────
+  describe('Rider KYC', () => {
+    let riderToken;
+    let riderId;
+ 
+    beforeEach(async () => {
+      const reg = await registerRider({
+        email: 'kycrider@test.com',
+        phoneNumber: '08011112222',
+      });
+      riderToken = reg.body.token;
+      riderId = reg.body.rider._id;
+    });
+ 
+    it('GET /api/riders/me/kyc returns pending status initially', async () => {
+      const res = await request(app)
+        .get('/api/riders/me/kyc')
+        .set('Authorization', `Bearer ${riderToken}`);
+      expect(res.status).toBe(200);
+      expect(res.body.kycStatus).toBe('pending');
+      expect(res.body.checks.nin.verified).toBe(false);
+    });
+ 
+    it('POST /api/riders/me/kyc/nin verifies NIN', async () => {
+      const res = await request(app)
+        .post('/api/riders/me/kyc/nin')
+        .set('Authorization', `Bearer ${riderToken}`)
+        .send({ nin: '12345678901' });
+      expect(res.status).toBe(200);
+      expect(res.body.verified).toBe(true);
+      expect(res.body.data.firstName).toBe('John');
+      expect(res.body.kycStatus).toBe('in_progress');
+    });
+ 
+    it('POST /api/riders/me/kyc/nin returns 400 for invalid NIN format', async () => {
+      const res = await request(app)
+        .post('/api/riders/me/kyc/nin')
+        .set('Authorization', `Bearer ${riderToken}`)
+        .send({ nin: '123' }); // too short
+      expect(res.status).toBe(422);
+    });
+ 
+    it('POST /api/riders/me/kyc/license requires NIN first', async () => {
+      const res = await request(app)
+        .post('/api/riders/me/kyc/license')
+        .set('Authorization', `Bearer ${riderToken}`)
+        .send({ licenseNumber: 'ABC123456789', dateOfBirth: '1990-01-01' });
+      expect(res.status).toBe(400);
+      expect(res.body.message).toMatch(/NIN/);
+    });
+ 
+    it('POST /api/riders/me/kyc/license verifies license after NIN', async () => {
+      await request(app)
+        .post('/api/riders/me/kyc/nin')
+        .set('Authorization', `Bearer ${riderToken}`)
+        .send({ nin: '12345678901' });
+ 
+      const res = await request(app)
+        .post('/api/riders/me/kyc/license')
+        .set('Authorization', `Bearer ${riderToken}`)
+        .send({ licenseNumber: 'ABC123456789', dateOfBirth: '1990-01-01' });
+ 
+      expect(res.status).toBe(200);
+      expect(res.body.verified).toBe(true);
+      expect(res.body.data.stateOfIssue).toBe('Lagos');
+    });
+ 
+    it('POST /api/riders/me/kyc/address submits utility bill', async () => {
+      const res = await request(app)
+        .post('/api/riders/me/kyc/address')
+        .set('Authorization', `Bearer ${riderToken}`)
+        .send({ documentUrl: 'https://cloudinary.com/utility-bill.jpg' });
+      expect(res.status).toBe(200);
+      expect(res.body.submitted).toBe(true);
+    });
+ 
+    it('Admin can approve rider utility bill', async () => {
+      await request(app)
+        .post('/api/riders/me/kyc/address')
+        .set('Authorization', `Bearer ${riderToken}`)
+        .send({ documentUrl: 'https://cloudinary.com/utility-bill.jpg' });
+ 
+      const { token: adminToken } = await createAdmin();
+      const res = await request(app)
+        .post(`/api/admin/kyc/rider/${riderId}/address`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ action: 'approve' });
+ 
+      expect(res.status).toBe(200);
+      expect(res.body.action).toBe('approve');
+    });
+ 
+    it('Admin cannot approve rider before KYC is passed', async () => {
+      // Phone verify first
+      await request(app)
+        .post('/api/riders/me/phone/send')
+        .set('Authorization', `Bearer ${riderToken}`);
+      await request(app)
+        .post('/api/riders/me/phone/verify')
+        .set('Authorization', `Bearer ${riderToken}`)
+        .send({ code: '654321' });
+ 
+      const { token: adminToken } = await createAdmin();
+      const res = await request(app)
+        .post('/api/admin/verify')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ id: riderId, type: 'rider', action: 'approve' });
+ 
+      expect(res.status).toBe(400);
+      expect(res.body.kycStatus).toBeDefined();
+    });
+  });
+ 
+  // ── Vendor KYC (Formal) ───────────────────────────────────────────────────
+  describe('Vendor KYC - Formal', () => {
+    let vendorToken;
+    let vendorId;
+ 
+    beforeEach(async () => {
+      const reg = await registerVendor({
+        email: 'kycvendorformal@test.com',
+        phoneNumber: '08033334444',
+      });
+      vendorToken = reg.body.token;
+      vendorId = reg.body.vendor._id;
+ 
+      // Declare as formal vendor
+      await request(app)
+        .post('/api/vendors/me/kyc/declare')
+        .set('Authorization', `Bearer ${vendorToken}`)
+        .send({ isInformalVendor: false });
+    });
+ 
+    it('GET /api/vendors/me/kyc returns formal vendor status', async () => {
+      const res = await request(app)
+        .get('/api/vendors/me/kyc')
+        .set('Authorization', `Bearer ${vendorToken}`);
+      expect(res.status).toBe(200);
+      expect(res.body.vendorType).toBe('formal');
+      expect(res.body.checks.cac.verified).toBe(false);
+    });
+ 
+    it('POST /api/vendors/me/kyc/cac verifies CAC', async () => {
+      const res = await request(app)
+        .post('/api/vendors/me/kyc/cac')
+        .set('Authorization', `Bearer ${vendorToken}`)
+        .send({ rcNumber: 'RC123456' });
+      expect(res.status).toBe(200);
+      expect(res.body.verified).toBe(true);
+      expect(res.body.data.companyName).toBe('Test Company Ltd');
+    });
+ 
+    it('POST /api/vendors/me/kyc/tin verifies TIN', async () => {
+      await request(app)
+        .post('/api/vendors/me/kyc/cac')
+        .set('Authorization', `Bearer ${vendorToken}`)
+        .send({ rcNumber: 'RC123456' });
+ 
+      const res = await request(app)
+        .post('/api/vendors/me/kyc/tin')
+        .set('Authorization', `Bearer ${vendorToken}`)
+        .send({ tin: '12345678-0001' });
+ 
+      expect(res.status).toBe(200);
+      expect(res.body.verified).toBe(true);
+      expect(res.body.kycStatus).toBe('passed');
+    });
+ 
+    it('Informal-only endpoints blocked for formal vendors', async () => {
+      const res = await request(app)
+        .post('/api/vendors/me/kyc/nin')
+        .set('Authorization', `Bearer ${vendorToken}`)
+        .send({ nin: '12345678901' });
+      expect(res.status).toBe(400);
+    });
+  });
+ 
+  // ── Vendor KYC (Informal) ─────────────────────────────────────────────────
+  describe('Vendor KYC - Informal', () => {
+    let vendorToken;
+    let vendorId;
+ 
+    beforeEach(async () => {
+      const reg = await registerVendor({
+        email: 'kycvendorinformal@test.com',
+        phoneNumber: '08055556666',
+      });
+      vendorToken = reg.body.token;
+      vendorId = reg.body.vendor._id;
+ 
+      await request(app)
+        .post('/api/vendors/me/kyc/declare')
+        .set('Authorization', `Bearer ${vendorToken}`)
+        .send({ isInformalVendor: true });
+    });
+ 
+    it('GET /api/vendors/me/kyc shows both paths for informal vendor', async () => {
+      const res = await request(app)
+        .get('/api/vendors/me/kyc')
+        .set('Authorization', `Bearer ${vendorToken}`);
+      expect(res.status).toBe(200);
+      expect(res.body.vendorType).toBe('informal');
+      expect(res.body.paths.agentPath).toBeDefined();
+      expect(res.body.paths.digitalPath).toBeDefined();
+    });
+ 
+    it('Informal Path B: NIN + T&Cs sets kycStatus to passed', async () => {
+      // Note: selfie is deferred, so Path B = NIN + terms for now
+      await request(app)
+        .post('/api/vendors/me/kyc/nin')
+        .set('Authorization', `Bearer ${vendorToken}`)
+        .send({ nin: '12345678901' });
+ 
+      // Temporarily override selfieVerified to test terms path
+      // (in real usage, SmileID sets this)
+      const Vendor = require('../models/vendorModel');
+      await Vendor.findByIdAndUpdate(vendorId, { selfieVerified: true });
+ 
+      const res = await request(app)
+        .post('/api/vendors/me/kyc/terms')
+        .set('Authorization', `Bearer ${vendorToken}`)
+        .send({ agreed: true, termsVersion: 'v1.0' });
+ 
+      expect(res.status).toBe(200);
+      expect(res.body.kycStatus).toBe('passed');
+    });
+ 
+    it('Informal Path A: NIN + agent visit sets kycStatus to passed', async () => {
+      await request(app)
+        .post('/api/vendors/me/kyc/nin')
+        .set('Authorization', `Bearer ${vendorToken}`)
+        .send({ nin: '12345678901' });
+ 
+      const { token: adminToken } = await createAdmin();
+      const res = await request(app)
+        .post(`/api/admin/kyc/vendor/${vendorId}/agent`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ verified: true, notes: 'Visited suya stand at Wuse Market. Legitimate.' });
+ 
+      expect(res.status).toBe(200);
+      expect(res.body.kycStatus).toBe('passed');
+    });
+ 
+    it('Formal-only endpoints blocked for informal vendors', async () => {
+      const res = await request(app)
+        .post('/api/vendors/me/kyc/cac')
+        .set('Authorization', `Bearer ${vendorToken}`)
+        .send({ rcNumber: 'RC123456' });
+      expect(res.status).toBe(400);
+    });
+ 
+    it('POST /api/vendors/me/kyc/terms requires NIN first', async () => {
+      const res = await request(app)
+        .post('/api/vendors/me/kyc/terms')
+        .set('Authorization', `Bearer ${vendorToken}`)
+        .send({ agreed: true });
+      expect(res.status).toBe(400);
+      expect(res.body.message).toMatch(/NIN/);
+    });
+  });
+ 
+  // ── Admin KYC overview ────────────────────────────────────────────────────
+  describe('Admin KYC overview', () => {
+    it('GET /api/admin/kyc/pending returns pending vendors and riders', async () => {
+      const { token: adminToken } = await createAdmin();
+      const res = await request(app)
+        .get('/api/admin/kyc/pending')
+        .set('Authorization', `Bearer ${adminToken}`);
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty('vendors');
+      expect(res.body).toHaveProperty('riders');
+    });
   });
 });

@@ -143,6 +143,7 @@ router.get('/pending', async (req, res) => {
 // ─── POST /api/admin/verify ─────────────────────────────────────────────────────
 // ✅ FIXED: now sends approval/rejection emails
 router.post('/verify', async (req, res) => {
+  
   try {
     const { id, type, action } = req.body;
     if (!id || !['vendor', 'rider'].includes(type) || !['approve', 'reject'].includes(action)) {
@@ -171,6 +172,13 @@ router.post('/verify', async (req, res) => {
           message: `Cannot approve: ${type} has not verified their phone number yet.`,
         });
       }
+      if (entity.kycStatus !== 'passed') {
+        return res.status(400).json({
+          message: `Cannot approve: ${type} KYC is not complete. Current status: ${entity.kycStatus}.`,
+          kycStatus: entity.kycStatus,
+        });
+      }
+    
       await Model.findByIdAndUpdate(id, { verified: true });
 
       // Fire approval email

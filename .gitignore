@@ -5,3 +5,4 @@ test-smtp.js
 Bruno/
 .env.test
 coverage/
+nightcrawlers-github-recovery-codes

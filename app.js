@@ -14,9 +14,13 @@ const orderRoutes = require('./routes/orderRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const earningsRoutes = require('./routes/earningsRoutes');
 const { createPhoneVerificationRoutes } = require('./routes/phoneVerificationRoutes');
+const { createBankVerificationRoutes } = require('./routes/bankVerificationRoutes');
 const User = require('./models/userModel');
 const Vendor = require('./models/vendorModel');
 const Rider = require('./models/riderModel');
+const riderKycRoutes = require('./routes/riderKycRoutes');
+const vendorKycRoutes = require('./routes/vendorKycRoutes');
+const adminKycRoutes = require('./routes/adminKycRoutes');
 const swaggerUi = require("swagger-ui-express");
 const swaggerFile = require("./swagger-output.json");
 
@@ -41,6 +45,15 @@ app.use('/api/admins', adminAuthRoutes);   // admin login/me
 app.use('/api/users/me/phone', createPhoneVerificationRoutes(User, 'customer'));
 app.use('/api/vendors/me/phone', createPhoneVerificationRoutes(Vendor, 'vendor'));
 app.use('/api/riders/me/phone', createPhoneVerificationRoutes(Rider, 'rider'));
+
+// ─── Bank Verification (mounted once per role) ──────────────────────────────
+app.use('/api/vendors/me/bank', createBankVerificationRoutes(Vendor, 'vendor'));
+app.use('/api/riders/me/bank', createBankVerificationRoutes(Rider, 'rider'));
+
+// ─── KYC Routes ──────────────────────────────────────────────────────────────
+app.use('/api/riders', riderKycRoutes);      // GET/POST /api/riders/me/kyc/...
+app.use('/api/vendors', vendorKycRoutes);    // GET/POST /api/vendors/me/kyc/...
+app.use('/api/admin', adminKycRoutes);       // GET/POST /api/admin/kyc/...
  
 // ─── Stores & Menu ──────────────────────────────────────────────────────────
 app.use('/api/stores', storeRoutes);       // explore, store CRUD

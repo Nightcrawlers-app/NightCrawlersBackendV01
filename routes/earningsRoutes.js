@@ -58,6 +58,17 @@ router.get('/vendors/:id/earnings', protect, async (req, res) => {
     if (req.user.role !== 'admin' && String(req.user.id) !== req.params.id) {
       return res.status(403).json({ message: 'Forbidden' });
     }
+
+    if (req.user.role === 'vendor') {
+      const Vendor = require('../models/vendorModel');
+      const vendor = await Vendor.findById(req.user.id);
+      if (vendor && !vendor.bankVerified) {
+        return res.status(403).json({
+          message: 'Please verify your bank account before accessing earnings.',
+          needsBankVerification: true,
+        });
+      }
+    }
     const earnings = await earningsAgg({ vendorId: req.params.id }, 'totalAmount');
     res.json(earnings);
   } catch (err) {
@@ -137,6 +148,18 @@ router.get('/riders/:id/earnings', protect, async (req, res) => {
     if (req.user.role !== 'admin' && String(req.user.id) !== req.params.id) {
       return res.status(403).json({ message: 'Forbidden' });
     }
+
+    if (req.user.role === 'rider') {
+      const Rider = require('../models/riderModel');
+      const rider = await Rider.findById(req.user.id);
+      if (rider && !rider.bankVerified) {
+        return res.status(403).json({
+          message: 'Please verify your bank account before accessing earnings.',
+          needsBankVerification: true,
+        });
+      }
+    }
+  
     const earnings = await earningsAgg({ riderId: req.params.id }, 'deliveryFee');
     res.json(earnings);
   } catch (err) {
