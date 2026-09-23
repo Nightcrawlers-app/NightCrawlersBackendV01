@@ -14,7 +14,7 @@ const updateRiderKycStatus = async (rider) => {
     rider.ninVerified,
     rider.licenseVerified,
     rider.addressVerified,
-    // rider.selfieVerified, // re-enable once SmileID is integrated
+    rider.selfieVerified,
   ];
 
   const anyStarted = rider.ninVerified || rider.licenseVerified ||
@@ -51,7 +51,7 @@ router.get('/me/kyc', protect, requireRole('rider'), async (req, res) => {
         },
         selfie: {
           verified: rider.selfieVerified,
-          note: 'Selfie/liveness check coming soon via SmileID.',
+          note: 'Complete selfie and liveness check via SmileID.',
         },
         residentialAddress: {
           verified: rider.addressVerified,
@@ -59,7 +59,7 @@ router.get('/me/kyc', protect, requireRole('rider'), async (req, res) => {
           submittedAt: rider.addressSubmittedAt,
         },
       },
-      requiredChecks: ['nin', 'driversLicense', 'residentialAddress'],
+      requiredChecks: ['nin', 'driversLicense', 'residentialAddress', 'selfie'],
       allVerified: rider.kycStatus === 'passed',
     });
   } catch (err) {
