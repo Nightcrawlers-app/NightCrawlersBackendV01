@@ -33,6 +33,8 @@ const app = express();
 // cross-origin (Vercel frontend ↔ GCP backend).
 const allowedOrigins = [
   process.env.FRONTEND_URL,          // https://night-crawlers.vercel.app
+  'https://nightcrawlers.app',          // Vercel frontend
+  'https://www.nightcrawlers.app',     // Vercel frontend
   'http://localhost:5173',           // Vite dev server
   'http://localhost:3000',
 ].filter(Boolean);
