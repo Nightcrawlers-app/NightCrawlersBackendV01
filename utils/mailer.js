@@ -283,6 +283,22 @@ const sendRiderRejectedEmail = async (to, firstName) => {
   });
 };
 
+const sendContactEmail = async ({ firstName, lastName, email, message }) => {
+  await transporter.sendMail({
+    from: process.env.SMTP_FROM,
+    to: process.env.SMTP_FROM, // sends to yourself
+    replyTo: email,
+    subject: `New Contact Message from ${firstName} ${lastName}`,
+    html: `
+      <h2>New Contact Form Submission</h2>
+      <p><strong>Name:</strong> ${firstName} ${lastName}</p>
+      <p><strong>Email:</strong> <a href="mailto:${email}">${email}</a></p>
+      <p><strong>Message:</strong></p>
+      <p>${message}</p>
+    `,
+  });
+};
+
 module.exports = {
   generateCode,
   sendVerificationEmail,
@@ -297,4 +313,5 @@ module.exports = {
   sendRiderWelcomeEmail,
   sendRiderApprovedEmail,
   sendRiderRejectedEmail,
+  sendContactEmail,
 };
