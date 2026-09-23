@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const cookieParser = require('cookie-parser'); 
 
 const connectDB = require('./config/dbConfig');
 const userAuthRoutes = require('./routes/userAuthRoutes');
@@ -21,12 +22,36 @@ const Rider = require('./models/riderModel');
 const riderKycRoutes = require('./routes/riderKycRoutes');
 const vendorKycRoutes = require('./routes/vendorKycRoutes');
 const adminKycRoutes = require('./routes/adminKycRoutes');
+const smileIdRoutes = require('./routes/smileIdRoutes');
 const swaggerUi = require("swagger-ui-express");
 const swaggerFile = require("./swagger-output.json");
 
 const app = express();
 
-app.use(cors());
+// ─── CORS ─────────────────────────────────────────────────────────────────────
+// Must be before all routes. credentials: true is required for cookies to work
+// cross-origin (Vercel frontend ↔ GCP backend).
+const allowedOrigins = [
+  process.env.FRONTEND_URL,          // https://night-crawlers.vercel.app
+  'http://localhost:5173',           // Vite dev server
+  'http://localhost:3000',
+].filter(Boolean);
+ 
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (curl, Postman, Jest supertest)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    callback(new Error(`CORS: origin ${origin} not allowed`));
+  },
+  credentials: true,   // ← required for cookies
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
+ 
+// ─── Body & Cookie parsing ────────────────────────────────────────────────────
+app.use(cookieParser());                        // ← parse cookies from every request
+
 app.use(express.json({ limit: '10mb' })); // 10mb to allow base64 image uploads
 
 connectDB();
@@ -54,7 +79,8 @@ app.use('/api/riders/me/bank', createBankVerificationRoutes(Rider, 'rider'));
 app.use('/api/riders', riderKycRoutes);      // GET/POST /api/riders/me/kyc/...
 app.use('/api/vendors', vendorKycRoutes);    // GET/POST /api/vendors/me/kyc/...
 app.use('/api/admin', adminKycRoutes);       // GET/POST /api/admin/kyc/...
- 
+app.use('/api/kyc', smileIdRoutes); 
+
 // ─── Stores & Menu ──────────────────────────────────────────────────────────
 app.use('/api/stores', storeRoutes);       // explore, store CRUD
 app.use('/api', menuItemRoutes);           // /api/menu-items, /api/stores/:id/menu-items
@@ -88,4 +114,4 @@ app.use((err, req, res, next) => {
 });
 
 
-module.exports = app; // Export the app for testing
+module.exports = app;

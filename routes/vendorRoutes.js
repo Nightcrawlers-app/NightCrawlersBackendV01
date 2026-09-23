@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Vendor = require('../models/vendorModel');
 const { signToken } = require('../utils/signToken');
-const { protect, requireRole } = require('../middlewares/auth');
+const { protect, requireRole, setAuthCookie, clearAuthCookie } = require('../middlewares/auth');
 const { sendVendorWelcomeEmail } = require('../utils/mailer');
 
 const resolveBusinessType = (input) => {
@@ -46,11 +46,15 @@ router.post('/', async (req, res) => {
       verified: false,
     });
 
-     // Fire-and-forget welcome email
     sendVendorWelcomeEmail(vendor.email, vendor.firstName, vendor.businessTypeRaw || vendor.businessType)
       .catch(err => console.error('Vendor welcome email failed:', err.message));
 
     const token = signToken(vendor._id, 'vendor');
+
+    // ── Set httpOnly cookie (secure) ──────────────────────────────────────────
+    setAuthCookie(res, token, 'vendor');
+
+    // Still return token in body so Jest supertest tests keep working without cookies
     res.status(201).json({ token, vendor: vendor.toSafeJSON() });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -67,10 +71,20 @@ router.post('/login', async (req, res) => {
     }
 
     const token = signToken(vendor._id, 'vendor');
+
+    // ── Set httpOnly cookie (secure) ──────────────────────────────────────────
+    setAuthCookie(res, token, 'vendor');
+
     res.json({ token, vendor: vendor.toSafeJSON() });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
+});
+
+// POST /api/vendors/logout  ← NEW
+router.post('/logout', (req, res) => {
+  clearAuthCookie(res, 'vendor');
+  res.json({ success: true });
 });
 
 // GET /api/vendors/me

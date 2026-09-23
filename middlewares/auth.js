@@ -1,13 +1,80 @@
 const jwt = require('jsonwebtoken');
 
 /**
- * Verifies JWT and attaches { id, role } to req.user.
- * Token payload shape: { id, role } where role is one of
- * 'customer' | 'vendor' | 'rider' | 'admin'.
+ * Cookie names — one per role so vendor + rider can coexist in the same browser.
+ * httpOnly: true  → JS cannot read the token (XSS protection)
+ * secure: true    → only sent over HTTPS (set to false in dev via NODE_ENV check)
+ * sameSite: 'lax' → sent on same-site navigations, blocks CSRF from other origins
+ */
+const COOKIE_NAMES = {
+  customer: 'nc_customer_token',
+  vendor:   'nc_vendor_token',
+  rider:    'nc_rider_token',
+  admin:    'nc_admin_token',
+};
+
+/**
+ * Cookie options — secure only in production.
+ */
+const cookieOptions = (maxAgeDays = 30) => ({
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+  maxAge: maxAgeDays * 24 * 60 * 60 * 1000,
+  path: '/',
+});
+
+/**
+ * Sets an httpOnly session cookie for the given role.
+ * Call this in login/signup handlers instead of returning the token in the body.
+ */
+const setAuthCookie = (res, token, role) => {
+  const name = COOKIE_NAMES[role];
+  if (!name) throw new Error(`Unknown role: ${role}`);
+  res.cookie(name, token, cookieOptions());
+};
+
+/**
+ * Clears the session cookie for the given role.
+ * Call this in logout handlers.
+ */
+const clearAuthCookie = (res, role) => {
+  const name = COOKIE_NAMES[role];
+  if (name) {
+    res.clearCookie(name, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      path: '/',
+    });
+  }
+};
+
+/**
+ * Extracts and verifies a JWT from either:
+ *   1. An httpOnly cookie (preferred — set by login/signup)
+ *   2. Authorization: Bearer <token> header (fallback for API clients / tests)
+ *
+ * Attaches { id, role } to req.user on success.
  */
 const protect = (req, res, next) => {
-  const header = req.headers.authorization || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+  let token = null;
+
+  // 1. Try cookies first (most secure path)
+  if (req.cookies) {
+    for (const name of Object.values(COOKIE_NAMES)) {
+      if (req.cookies[name]) {
+        token = req.cookies[name];
+        break;
+      }
+    }
+  }
+
+  // 2. Fall back to Authorization header (API clients, Jest tests)
+  if (!token) {
+    const header = req.headers.authorization || '';
+    if (header.startsWith('Bearer ')) token = header.slice(7);
+  }
 
   if (!token) {
     return res.status(401).json({ message: 'Not authenticated' });
@@ -24,7 +91,6 @@ const protect = (req, res, next) => {
 
 /**
  * Restricts access to specific roles.
- * Usage: requireRole('vendor', 'admin')
  */
 const requireRole = (...roles) => (req, res, next) => {
   if (!req.user || !roles.includes(req.user.role)) {
@@ -35,20 +101,32 @@ const requireRole = (...roles) => (req, res, next) => {
 
 /**
  * Like protect, but does not fail if no token is present.
- * Useful for routes that behave differently for logged-in vs anonymous users.
  */
 const optionalAuth = (req, res, next) => {
-  const header = req.headers.authorization || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+  let token = null;
+
+  if (req.cookies) {
+    for (const name of Object.values(COOKIE_NAMES)) {
+      if (req.cookies[name]) {
+        token = req.cookies[name];
+        break;
+      }
+    }
+  }
+
+  if (!token) {
+    const header = req.headers.authorization || '';
+    if (header.startsWith('Bearer ')) token = header.slice(7);
+  }
 
   if (!token) return next();
 
   try {
     req.user = jwt.verify(token, process.env.JWT_SECRET);
-  } catch (err) {
-    // ignore invalid token, proceed as anonymous
+  } catch {
+    // ignore invalid token
   }
   next();
 };
 
-module.exports = { protect, requireRole, optionalAuth };
+module.exports = { protect, requireRole, optionalAuth, setAuthCookie, clearAuthCookie };

@@ -2,8 +2,8 @@ const express = require('express');
 const router = express.Router();
 const Rider = require('../models/riderModel');
 const { signToken } = require('../utils/signToken');
-const { protect, requireRole } = require('../middlewares/auth');
-const { sendRiderWelcomeEmail } = require('../utils/mailer'); // ✅ ADDED
+const { protect, requireRole, setAuthCookie, clearAuthCookie } = require('../middlewares/auth');
+const { sendRiderWelcomeEmail } = require('../utils/mailer');
 
 // POST /api/riders — create rider account
 router.post('/', async (req, res) => {
@@ -30,12 +30,15 @@ router.post('/', async (req, res) => {
       verified: false,
     });
 
-    // ✅ ADDED: fire-and-forget welcome email (mirrors vendorRoutes pattern)
     sendRiderWelcomeEmail(rider.email, rider.firstName, rider.vehicleType).catch((err) =>
       console.error('Rider welcome email failed:', err.message)
     );
 
     const token = signToken(rider._id, 'rider');
+
+    // ── Set httpOnly cookie (secure) ──────────────────────────────────────────
+    setAuthCookie(res, token, 'rider');
+
     res.status(201).json({ token, rider: rider.toSafeJSON() });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -52,10 +55,20 @@ router.post('/login', async (req, res) => {
     }
 
     const token = signToken(rider._id, 'rider');
+
+    // ── Set httpOnly cookie (secure) ──────────────────────────────────────────
+    setAuthCookie(res, token, 'rider');
+
     res.json({ token, rider: rider.toSafeJSON() });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
+});
+
+// POST /api/riders/logout  ← NEW
+router.post('/logout', (req, res) => {
+  clearAuthCookie(res, 'rider');
+  res.json({ success: true });
 });
 
 // GET /api/riders/me
