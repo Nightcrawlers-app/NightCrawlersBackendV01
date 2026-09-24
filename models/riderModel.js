@@ -57,6 +57,12 @@ const RiderSchema = new mongoose.Schema(
     password: { type: String, required: true },
     location: { type: String, required: true },
     isOnline: { type: Boolean, default: false },
+    // Last reported GPS position while online. [longitude, latitude].
+    coordinates: {
+      type: { type: String, enum: ['Point'] },
+      coordinates: { type: [Number], default: undefined },
+    },
+    locationUpdatedAt: { type: Date, default: null },
     lastSeen: { type: Date, default: null },
     verified: { type: Boolean, default: false },
   },
@@ -73,8 +79,14 @@ RiderSchema.methods.comparePassword = function (candidate) {
   return bcrypt.compare(candidate, this.password);
 };
 
+RiderSchema.index({ coordinates: '2dsphere' });
+
 RiderSchema.methods.toSafeJSON = function () {
   const obj = this.toObject();
+  obj.id = String(obj._id);
+  const c = obj.coordinates?.coordinates;
+  obj.latitude = Array.isArray(c) && c.length === 2 ? c[1] : null;
+  obj.longitude = Array.isArray(c) && c.length === 2 ? c[0] : null;
   delete obj.password;
   delete obj.phoneVerificationCode;
   delete obj.phoneVerificationExpiry;

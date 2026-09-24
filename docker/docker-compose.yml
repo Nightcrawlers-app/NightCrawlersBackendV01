@@ -8,6 +8,11 @@ services:
     restart: unless-stopped
     ports:
       - "5000:5000"
+    # Pass EVERY variable in .env into the container. The list below only
+    # covered DB/JWT/SMTP, so SENDCHAMP_API_KEY (SMS), Paystack, Prembly and
+    # SmileID keys never reached the API — phone verification couldn't work.
+    env_file:
+      - .env
     environment:
       NODE_ENV: ${NODE_ENV:-production}
       PORT: 5000

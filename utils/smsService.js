@@ -40,18 +40,33 @@ const normalizePhone = (phone) => {
 const sendSms = async (to, message) => {
   const phone = normalizePhone(to);
 
+  if (!process.env.SENDCHAMP_API_KEY) {
+    throw new Error('SMS is not configured on the server (SENDCHAMP_API_KEY missing).');
+  }
+
+  let body;
   try {
     const response = await sendchampClient.post('/sms/send', {
-      to: phone,
+      to: [phone], // Sendchamp requires an array, even for one number
       message,
       sender_name: process.env.SENDCHAMP_SENDER_NAME || 'Sendchamp',
-      route: 'dnd', // bypasses Do-Not-Disturb registry, recommended for OTPs in Nigeria
+      route: process.env.SENDCHAMP_ROUTE || 'dnd', // dnd reaches numbers on the Do-Not-Disturb list
     });
-    return response.data;
+    body = response.data;
   } catch (err) {
     const errMsg = err.response?.data?.message || err.message;
+    console.error(`❌ SMS → ${phone} failed:`, JSON.stringify(err.response?.data || err.message));
     throw new Error(`Sendchamp SMS failed: ${errMsg}`);
   }
+
+  // Sendchamp can answer HTTP 200 and still not send (test key, empty wallet,
+  // unapproved sender ID). Log the full reply so the reason is visible.
+  const status = String(body?.data?.status || body?.status || '').toLowerCase();
+  console.log(`📱 SMS → ${phone}: ${JSON.stringify(body)}`);
+  if (['error', 'failed', 'rejected'].includes(status) || body?.code >= 400) {
+    throw new Error(`Sendchamp SMS failed: ${body?.message || status}`);
+  }
+  return body;
 };
 
 /**
@@ -60,7 +75,13 @@ const sendSms = async (to, message) => {
  */
 const sendPhoneVerificationCode = async (phone, code, firstName = '') => {
   const greeting = firstName ? `Hi ${firstName}, ` : '';
-  const message = `${greeting}your NightCrawlers verification code is ${code}. It expires in 10 minutes. Do not share this code with anyone.`;
+  const message = `${greeting}your NightCrawlers verification code is ${code}. It expires in 30 minutes. Do not share this code with anyone.`;
+
+  // Local development only: print the code so you can finish the flow even
+  // when the SMS doesn't arrive. Never runs in production.
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(`🔑 [dev] phone code for ${normalizePhone(phone)}: ${code}`);
+  }
   return sendSms(phone, message);
 };
 

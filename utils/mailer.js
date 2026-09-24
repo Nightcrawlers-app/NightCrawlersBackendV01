@@ -1,14 +1,65 @@
 const nodemailer = require('nodemailer');
 
+const SMTP_PORT = Number(process.env.SMTP_PORT) || 465;
+
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,
-  port: Number(process.env.SMTP_PORT),
-  secure: true,
+  port: SMTP_PORT,
+  // 465 = implicit TLS. 587/25 = STARTTLS (secure must be false there).
+  secure: SMTP_PORT === 465,
   auth: {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
   },
+  connectionTimeout: 15000,
+  greetingTimeout: 10000,
+  socketTimeout: 20000,
 });
+
+/**
+ * Checks the SMTP login once at startup and logs a clear line either way.
+ * Before this, a bad password or a blocked port only showed up as a vague
+ * failure the first time someone tried to sign up.
+ */
+const verifyMailer = async () => {
+  const missing = ['SMTP_HOST', 'SMTP_USER', 'SMTP_PASS', 'SMTP_FROM'].filter((k) => !process.env[k]);
+  if (missing.length) {
+    console.error(`❌ Email disabled — missing env vars: ${missing.join(', ')}`);
+    return false;
+  }
+  try {
+    await transporter.verify();
+    console.log(`✅ SMTP ready (${process.env.SMTP_HOST}:${SMTP_PORT} as ${process.env.SMTP_USER})`);
+    return true;
+  } catch (err) {
+    console.error(`❌ SMTP check failed (${process.env.SMTP_HOST}:${SMTP_PORT}): ${err.message}`);
+    return false;
+  }
+};
+
+/**
+ * Every email goes through here so the server log shows exactly what happened:
+ *   ✉️  sent "Verify your account" → ada@x.com (<message-id>)
+ *   ❌ email "Verify your account" → ada@x.com failed: <reason>
+ * "sent" means Hostinger accepted it. If it then never arrives, check the
+ * recipient's spam folder and the domain's SPF/DKIM records in Hostinger.
+ */
+const sendMail = async (options) => {
+  try {
+    const info = await transporter.sendMail(options);
+    if (info.rejected?.length) {
+      throw new Error(`rejected by SMTP server: ${info.rejected.join(', ')}`);
+    }
+    console.log(`✉️  sent "${options.subject}" → ${options.to} (${info.messageId})`);
+    return info;
+  } catch (err) {
+    console.error(`❌ email "${options.subject}" → ${options.to} failed: ${err.message}`);
+    throw err;
+  }
+};
+
+const escapeHtml = (s) =>
+  String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 const generateCode = () =>
   Math.floor(100000 + Math.random() * 900000).toString();
@@ -41,7 +92,7 @@ const button = (href, label) => `
 // ─── Customer emails ──────────────────────────────────────────────────────────
 
 const sendVerificationEmail = async (to, firstName, code) => {
-  await transporter.sendMail({
+  await sendMail({
     from: `"Night Crawlers" <${process.env.SMTP_FROM}>`,
     to,
     subject: 'Verify your Night Crawlers account',
@@ -59,7 +110,7 @@ const sendVerificationEmail = async (to, firstName, code) => {
 };
 
 const sendWelcomeEmail = async (to, firstName) => {
-  await transporter.sendMail({
+  await sendMail({
     from: `"Night Crawlers" <${process.env.SMTP_FROM}>`,
     to,
     subject: 'Welcome to Night Crawlers 🎉',
@@ -80,7 +131,7 @@ const sendWelcomeEmail = async (to, firstName) => {
 };
 
 const sendPasswordResetEmail = async (to, firstName, code) => {
-  await transporter.sendMail({
+  await sendMail({
     from: `"Night Crawlers" <${process.env.SMTP_FROM}>`,
     to,
     subject: 'Reset your Night Crawlers password',
@@ -98,7 +149,7 @@ const sendPasswordResetEmail = async (to, firstName, code) => {
 };
 
 const sendNewLocationEmail = async (to, firstName, code, ip) => {
-  await transporter.sendMail({
+  await sendMail({
     from: `"Night Crawlers" <${process.env.SMTP_FROM}>`,
     to,
     subject: 'New login detected on your Night Crawlers account',
@@ -117,7 +168,7 @@ const sendNewLocationEmail = async (to, firstName, code, ip) => {
 };
 
 const sendPasswordChangedEmail = async (to, firstName) => {
-  await transporter.sendMail({
+  await sendMail({
     from: `"Night Crawlers" <${process.env.SMTP_FROM}>`,
     to,
     subject: 'Your Night Crawlers password was changed',
@@ -140,7 +191,7 @@ const sendAccountUpdatedEmail = async (to, firstName, changes) => {
     .map((c) => `<li style="margin-bottom:6px">${c}</li>`)
     .join('');
 
-  await transporter.sendMail({
+  await sendMail({
     from: `"Night Crawlers" <${process.env.SMTP_FROM}>`,
     to,
     subject: 'Your Night Crawlers account was updated',
@@ -163,7 +214,7 @@ const sendAccountUpdatedEmail = async (to, firstName, changes) => {
 // ─── Vendor / Rider emails ────────────────────────────────────────────────────
 
 const sendVendorWelcomeEmail = async (to, firstName, businessType) => {
-  await transporter.sendMail({
+  await sendMail({
     from: `"Night Crawlers" <${process.env.SMTP_FROM}>`,
     to,
     subject: 'Welcome to Night Crawlers — Partner Application Received',
@@ -190,7 +241,7 @@ const sendVendorWelcomeEmail = async (to, firstName, businessType) => {
 };
 
 const sendVendorApprovedEmail = async (to, firstName) => {
-  await transporter.sendMail({
+  await sendMail({
     from: `"Night Crawlers" <${process.env.SMTP_FROM}>`,
     to,
     subject: '🎉 Your Night Crawlers partner account is approved!',
@@ -206,7 +257,7 @@ const sendVendorApprovedEmail = async (to, firstName) => {
 };
 
 const sendVendorRejectedEmail = async (to, firstName) => {
-  await transporter.sendMail({
+  await sendMail({
     from: `"Night Crawlers" <${process.env.SMTP_FROM}>`,
     to,
     subject: 'Update on your Night Crawlers partner application',
@@ -224,7 +275,7 @@ const sendVendorRejectedEmail = async (to, firstName) => {
 };
 
 const sendRiderWelcomeEmail = async (to, firstName, vehicleType) => {
-  await transporter.sendMail({
+  await sendMail({
     from: `"Night Crawlers" <${process.env.SMTP_FROM}>`,
     to,
     subject: 'Welcome to Night Crawlers — Rider Application Received',
@@ -251,7 +302,7 @@ const sendRiderWelcomeEmail = async (to, firstName, vehicleType) => {
 };
 
 const sendRiderApprovedEmail = async (to, firstName) => {
-  await transporter.sendMail({
+  await sendMail({
     from: `"Night Crawlers" <${process.env.SMTP_FROM}>`,
     to,
     subject: '🎉 Your Night Crawlers rider account is approved!',
@@ -266,7 +317,7 @@ const sendRiderApprovedEmail = async (to, firstName) => {
 };
 
 const sendRiderRejectedEmail = async (to, firstName) => {
-  await transporter.sendMail({
+  await sendMail({
     from: `"Night Crawlers" <${process.env.SMTP_FROM}>`,
     to,
     subject: 'Update on your Night Crawlers rider application',
@@ -283,23 +334,69 @@ const sendRiderRejectedEmail = async (to, firstName) => {
   });
 };
 
-const sendContactEmail = async ({ firstName, lastName, email, message }) => {
-  await transporter.sendMail({
-    from: process.env.SMTP_FROM,
-    to: process.env.SMTP_FROM, // sends to yourself
-    replyTo: email,
-    subject: `New Contact Message from ${firstName} ${lastName}`,
-    html: `
-      <h2>New Contact Form Submission</h2>
-      <p><strong>Name:</strong> ${firstName} ${lastName}</p>
-      <p><strong>Email:</strong> <a href="mailto:${email}">${email}</a></p>
-      <p><strong>Message:</strong></p>
-      <p>${message}</p>
-    `,
+// ─── Contact form & newsletter ───────────────────────────────────────────────
+
+/** Internal: forwards a contact-form message to the support inbox. */
+const sendContactNotification = async ({ firstName, lastName, email, message, id }) => {
+  const inbox = process.env.CONTACT_INBOX || process.env.SMTP_FROM;
+  const name = `${firstName} ${lastName || ''}`.trim();
+  await sendMail({
+    from: `"Night Crawlers Website" <${process.env.SMTP_FROM}>`,
+    to: inbox,
+    replyTo: `"${name.replace(/"/g, '')}" <${email}>`, // hit Reply to answer the customer directly
+    subject: `New contact message from ${name}`,
+    text: `From: ${name} <${email}>\nRef: ${id}\n\n${message}`,
+    html: wrap(`
+      <p style="color:#222;font-size:16px;margin:0 0 8px"><strong>${escapeHtml(name)}</strong> &lt;${escapeHtml(email)}&gt;</p>
+      <p style="color:#98a2b3;font-size:12px;margin:0 0 16px">Ref: ${escapeHtml(id)}</p>
+      <div style="background:#f9fafb;border:1px solid #eaecf0;border-radius:8px;padding:16px;color:#344054;font-size:15px;white-space:pre-wrap">${escapeHtml(message)}</div>
+      <p style="color:#667085;font-size:13px;margin:16px 0 0">Reply to this email to respond to ${escapeHtml(firstName)}.</p>
+    `),
+  });
+};
+
+/** To the person who wrote in: "we got your message". */
+const sendContactAcknowledgement = async (to, firstName) => {
+  await sendMail({
+    from: `"Night Crawlers" <${process.env.SMTP_FROM}>`,
+    to,
+    subject: "We've received your message",
+    html: wrap(`
+      <p style="color:#222;font-size:16px;margin:0 0 8px">Hi ${escapeHtml(firstName)},</p>
+      <p style="color:#667085;font-size:15px;margin:0 0 16px">
+        Thanks for reaching out. Our team has your message and will get back to you shortly.
+      </p>
+    `),
+  });
+};
+
+/** Newsletter confirmation with a one-click unsubscribe link. */
+const sendNewsletterWelcome = async (to, unsubscribeToken) => {
+  const apiBase = (process.env.PUBLIC_API_URL || 'https://api.nightcrawlers.app').replace(/\/$/, '');
+  const unsubscribeUrl = `${apiBase}/api/newsletter/unsubscribe?token=${unsubscribeToken}`;
+  await sendMail({
+    from: `"Night Crawlers" <${process.env.SMTP_FROM}>`,
+    to,
+    subject: "You're on the Night Crawlers list 🌙",
+    headers: { 'List-Unsubscribe': `<${unsubscribeUrl}>` },
+    html: wrap(`
+      <p style="color:#222;font-size:16px;margin:0 0 8px">You're in! 🎉</p>
+      <p style="color:#667085;font-size:15px;margin:0 0 24px">
+        You'll be first to hear about new spots and late-night deals near you.
+      </p>
+      ${button(`${process.env.FRONTEND_URL || 'http://localhost:5173'}/explore`, 'Explore now')}
+      <p style="color:#98a2b3;font-size:12px;margin:0">
+        Changed your mind? <a href="${unsubscribeUrl}" style="color:#98a2b3">Unsubscribe</a>.
+      </p>
+    `),
   });
 };
 
 module.exports = {
+  verifyMailer,
+  sendContactNotification,
+  sendContactAcknowledgement,
+  sendNewsletterWelcome,
   generateCode,
   sendVerificationEmail,
   sendWelcomeEmail,
@@ -313,5 +410,4 @@ module.exports = {
   sendRiderWelcomeEmail,
   sendRiderApprovedEmail,
   sendRiderRejectedEmail,
-  sendContactEmail,
 };

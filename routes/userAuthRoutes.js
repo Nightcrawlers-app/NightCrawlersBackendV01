@@ -265,6 +265,24 @@ router.post('/verify-login', async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 });
+
+// POST /api/contact — contact form submission
+router.post('/contact', async (req, res) => {
+  try {
+    const { firstName, lastName, email, message } = req.body;
+
+    if (!email || !message) {
+      return res.status(400).json({ message: 'Email and message are required.' });
+    }
+
+    const { sendContactEmail } = require('../utils/mailer');
+    await sendContactEmail({ firstName, lastName, email, message });
+
+    res.json({ message: 'Message received. We\'ll be in touch shortly.' });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
  
 // ─── FORGOT PASSWORD ─────────────────────────────────────────────────────────
  

@@ -1,9 +1,10 @@
 const express = require('express');
+const { readLatLng, toPoint, geocodeAddress } = require('../utils/geocoder');
 const router = express.Router();
 const Rider = require('../models/riderModel');
 const { signToken } = require('../utils/signToken');
-const { protect, requireRole, setAuthCookie, clearAuthCookie } = require('../middlewares/auth');
-const { sendRiderWelcomeEmail } = require('../utils/mailer');
+const { protect, requireRole } = require('../middlewares/auth');
+const { sendRiderWelcomeEmail } = require('../utils/mailer'); // ✅ ADDED
 
 // POST /api/riders — create rider account
 router.post('/', async (req, res) => {
@@ -19,6 +20,9 @@ router.post('/', async (req, res) => {
       return res.status(409).json({ message: 'Email address is already in use.' });
     }
 
+    // Base location from the signup map, else geocode the typed text.
+    const point = readLatLng(req.body) || (await geocodeAddress(location));
+
     const rider = await Rider.create({
       firstName,
       lastName,
@@ -28,17 +32,15 @@ router.post('/', async (req, res) => {
       location,
       password,
       verified: false,
+      ...(point && { coordinates: toPoint(point) }),
     });
 
+    // ✅ ADDED: fire-and-forget welcome email (mirrors vendorRoutes pattern)
     sendRiderWelcomeEmail(rider.email, rider.firstName, rider.vehicleType).catch((err) =>
       console.error('Rider welcome email failed:', err.message)
     );
 
     const token = signToken(rider._id, 'rider');
-
-    // ── Set httpOnly cookie (secure) ──────────────────────────────────────────
-    setAuthCookie(res, token, 'rider');
-
     res.status(201).json({ token, rider: rider.toSafeJSON() });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -55,20 +57,10 @@ router.post('/login', async (req, res) => {
     }
 
     const token = signToken(rider._id, 'rider');
-
-    // ── Set httpOnly cookie (secure) ──────────────────────────────────────────
-    setAuthCookie(res, token, 'rider');
-
     res.json({ token, rider: rider.toSafeJSON() });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
-});
-
-// POST /api/riders/logout  ← NEW
-router.post('/logout', (req, res) => {
-  clearAuthCookie(res, 'rider');
-  res.json({ success: true });
 });
 
 // GET /api/riders/me
@@ -95,6 +87,26 @@ router.patch('/:id/status', protect, requireRole('rider'), async (req, res) => {
       { new: true }
     );
     res.json(rider.toSafeJSON());
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// PATCH /api/riders/:id/location — rider reports their GPS position while online
+router.patch('/:id/location', protect, requireRole('rider'), async (req, res) => {
+  try {
+    if (req.params.id !== req.user.id) {
+      return res.status(403).json({ message: 'Forbidden' });
+    }
+    const point = readLatLng(req.body);
+    if (!point) return res.status(400).json({ message: 'Valid latitude and longitude are required.' });
+
+    await Rider.findByIdAndUpdate(req.params.id, {
+      coordinates: toPoint(point),
+      locationUpdatedAt: new Date(),
+      lastSeen: new Date(),
+    });
+    res.status(204).end();
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

@@ -26,6 +26,10 @@ jest.mock('../utils/mailer', () => ({
   sendRiderWelcomeEmail: jest.fn().mockResolvedValue(true),
   sendRiderApprovedEmail: jest.fn().mockResolvedValue(true),
   sendRiderRejectedEmail: jest.fn().mockResolvedValue(true),
+  verifyMailer: jest.fn().mockResolvedValue(true),
+  sendContactNotification: jest.fn().mockResolvedValue(true),
+  sendContactAcknowledgement: jest.fn().mockResolvedValue(true),
+  sendNewsletterWelcome: jest.fn().mockResolvedValue(true),
 }));
 
 
@@ -1304,5 +1308,136 @@ describe('KYC Verification', () => {
       expect(res.body).toHaveProperty('vendors');
       expect(res.body).toHaveProperty('riders');
     });
+  });
+});
+
+// ── Contact & newsletter ─────────────────────────────────────────────────────
+
+describe('Contact & newsletter', () => {
+  const mailer = require('../utils/mailer');
+
+  it('POST /api/contact saves and emails the message', async () => {
+    const res = await request(app)
+      .post('/api/contact')
+      .send({ firstName: 'Ada', lastName: 'O', email: 'ada@test.com', message: 'Hello there' });
+    expect(res.status).toBe(201);
+    expect(mailer.sendContactNotification).toHaveBeenCalled();
+    const ContactMessage = require('../models/contactMessageModel');
+    expect(await ContactMessage.countDocuments()).toBe(1);
+  });
+
+  it('POST /api/contact rejects a missing message', async () => {
+    const res = await request(app).post('/api/contact').send({ firstName: 'Ada', email: 'ada@test.com' });
+    expect(res.status).toBe(400);
+  });
+
+  it('POST /api/newsletter subscribes once', async () => {
+    const first = await request(app).post('/api/newsletter').send({ email: 'Sub@Test.com' });
+    expect(first.status).toBe(201);
+    const again = await request(app).post('/api/newsletter').send({ email: 'sub@test.com' });
+    expect(again.status).toBe(200);
+    const Subscriber = require('../models/subscriberModel');
+    expect(await Subscriber.countDocuments()).toBe(1);
+  });
+
+  it('POST /api/newsletter rejects a bad email', async () => {
+    const res = await request(app).post('/api/newsletter').send({ email: 'nope' });
+    expect(res.status).toBe(400);
+  });
+});
+
+// ── Vendor business type ─────────────────────────────────────────────────────
+
+describe('Vendor business type', () => {
+  it('rejects a business type outside the list', async () => {
+    const res = await registerVendor({ businessType: 'Restaurant' });
+    expect(res.status).toBe(400);
+    expect(res.body.allowed).toContain('Food');
+  });
+
+  it('GET /api/vendors/business-types lists the options', async () => {
+    const res = await request(app).get('/api/vendors/business-types');
+    expect(res.body).toEqual(['Food', 'Groceries', 'Pharmacy', 'Drinks', 'Clubs/Lounges']);
+  });
+});
+
+// ── Geolocation ──────────────────────────────────────────────────────────────
+
+describe('Geolocation', () => {
+  let vendorToken;
+  beforeEach(async () => {
+    vendorToken = (await registerVendor()).body.token;
+  });
+
+  const makeStore = (body) =>
+    request(app)
+      .post('/api/stores')
+      .set('Authorization', `Bearer ${vendorToken}`)
+      .send({ imageUrl: 'https://example.com/i.jpg', ...body });
+
+  it('GET /api/stores?lat&lng returns nearby stores nearest-first with distance', async () => {
+    await makeStore({ name: 'Wuse Spot', address: 'Wuse 2, Abuja', lat: 9.0765, lng: 7.4803 });
+    await makeStore({ name: 'Garki Spot', address: 'Garki, Abuja', lat: 9.0333, lng: 7.4833 });
+    await makeStore({ name: 'Lekki Spot', address: 'Lekki, Lagos', lat: 6.4474, lng: 3.4723 });
+
+    const res = await request(app).get('/api/stores?lat=9.0770&lng=7.4800');
+    expect(res.status).toBe(200);
+    expect(res.body.map((s) => s.name)).toEqual(['Wuse Spot', 'Garki Spot']);
+    expect(res.body[0].distance).toBeLessThan(1);
+    expect(res.body[0].latitude).toBeCloseTo(9.0765);
+  });
+
+  it('a store whose address cannot be located gets no fake coordinates', async () => {
+    const res = await makeStore({ name: 'Nowhere', address: 'Somewhere unknown' });
+    expect(res.status).toBe(201);
+    expect(res.body.latitude).toBeNull();
+  });
+
+  it('PATCH /api/riders/:id/location stores the rider position', async () => {
+    const reg = await registerRider();
+    const res = await request(app)
+      .patch(`/api/riders/${reg.body.rider._id}/location`)
+      .set('Authorization', `Bearer ${reg.body.token}`)
+      .send({ latitude: 9.07, longitude: 7.48 });
+    expect(res.status).toBe(204);
+  });
+
+  it('customer addresses accept coordinates and come back with id + lat/lng', async () => {
+    const token = await loginUser();
+    const res = await request(app)
+      .post('/api/users/me/addresses')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ label: 'Home', address: '5 Aminu Kano Cres', city: 'Abuja', latitude: 9.07, longitude: 7.47 });
+    expect(res.status).toBe(201);
+    expect(res.body.addresses[0].id).toBeDefined();
+    expect(res.body.addresses[0].latitude).toBe(9.07);
+  });
+});
+
+// ── Profile avatar ───────────────────────────────────────────────────────────
+
+describe('Profile avatar', () => {
+  it('accepts a small image and rejects an oversized one', async () => {
+    const token = await loginUser();
+    const small = 'data:image/jpeg;base64,' + 'A'.repeat(1000);
+    const ok = await request(app).patch('/api/users/me').set('Authorization', `Bearer ${token}`).send({ avatar: small });
+    expect(ok.status).toBe(200);
+    expect(ok.body.avatar).toBe(small);
+
+    const huge = 'data:image/jpeg;base64,' + 'A'.repeat(700 * 1024);
+    const bad = await request(app).patch('/api/users/me').set('Authorization', `Bearer ${token}`).send({ avatar: huge });
+    expect(bad.status).toBe(400);
+  });
+});
+
+describe('Signup location pins', () => {
+  it('vendor and rider signup keep the map pin', async () => {
+    const v = await registerVendor({ latitude: 9.0765, longitude: 7.4803 });
+    expect(v.status).toBe(201);
+    expect(v.body.vendor.latitude).toBeCloseTo(9.0765);
+
+    const r = await registerRider({ latitude: 6.45, longitude: 3.47 });
+    expect(r.status).toBe(201);
+    expect(r.body.rider.longitude).toBeCloseTo(3.47);
   });
 });

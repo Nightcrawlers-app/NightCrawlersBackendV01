@@ -1,6 +1,21 @@
 const express = require('express');
 const router = express.Router();
 const Store = require('../models/storeModel');
+const { geocodeAddress, readLatLng, toPoint } = require('../utils/geocoder');
+
+/**
+ * Coordinates for a store: explicit lat/lng from the client win (a vendor
+ * dropping a pin or using GPS). Otherwise geocode the address text.
+ * Returns { coordinates, approximate } or null if the address can't be found.
+ */
+const resolveStorePoint = async (body, address) => {
+  const sent = readLatLng(body);
+  if (sent) return { coordinates: toPoint(sent), approximate: false };
+  const found = await geocodeAddress(address);
+  return found ? { coordinates: toPoint(found), approximate: true } : null;
+};
+
+const MAX_RADIUS_M = 50000;
 const { 
   protect, 
   requireRole, 
@@ -50,21 +65,38 @@ router.get('/', optionalAuth, async (req, res) => {
       ];
     }
 
-    // Geo query — find stores within radius (default 10km)
-    if (lat && lng) {
-      query.coordinates = {
-        $near: {
-          $geometry: {
-            type: 'Point',
-            coordinates: [parseFloat(lng), parseFloat(lat)],
-          },
-          $maxDistance: radius ? parseInt(radius) : 10000, // metres
-        },
-      };
+    // Where is the customer? Prefer real coordinates; otherwise try to
+    // geocode the address text they picked (e.g. "Wuse 2, Abuja").
+    let point = readLatLng({ lat, lng });
+    if (!point && req.query.address) {
+      point = await geocodeAddress(String(req.query.address));
     }
 
-    const stores = await Store.find(query).sort(lat && lng ? {}: { createdAt: -1 });
-    res.json(stores);
+    if (!point) {
+      const stores = await Store.find(query).sort({ createdAt: -1 });
+      return res.json(stores);
+    }
+
+    // $geoNear sorts nearest-first and gives us the distance for each store.
+    const maxDistance = Math.min(parseInt(radius, 10) || 10000, MAX_RADIUS_M); // metres
+    const results = await Store.aggregate([
+      {
+        $geoNear: {
+          near: { type: 'Point', coordinates: [point.longitude, point.latitude] },
+          distanceField: 'distanceMeters',
+          maxDistance,
+          spherical: true,
+          query,
+        },
+      },
+    ]);
+
+    res.json(
+      results.map(({ distanceMeters, ...raw }) => ({
+        ...Store.hydrate(raw).toJSON(),
+        distance: Math.round((distanceMeters / 1000) * 10) / 10, // km, 1 decimal
+      }))
+    );
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -97,12 +129,8 @@ router.post('/', protect, requireRole('vendor'), async (req, res) => {
     const vendor = await Vendor.findById(req.user.id);
     if (!vendor) return res.status(404).json({ message: 'Vendor not found' });
 
-    // Safely parse or fallback
-    const parsedLng = parseFloat(lng);
-    const parsedLat = parseFloat(lat);
-    
-    const finalLng = !isNaN(parsedLng) ? parsedLng : 7.4985;
-    const finalLat = !isNaN(parsedLat) ? parsedLat : 9.0563;
+    // Real position, or geocoded from the address. No more fake Abuja default.
+    const located = await resolveStorePoint({ lat, lng }, address);
 
     const store = await Store.create({
       vendorId: req.user.id,
@@ -114,10 +142,10 @@ router.post('/', protect, requireRole('vendor'), async (req, res) => {
       imageUrl,
       openingTime: openingTime || { hour: 0, minute: 0 },
       closingTime: closingTime || { hour: 0, minute: 0 },
-      coordinates: {
-        type: 'Point',
-        coordinates: [ finalLng, finalLat ],
-      },
+      ...(located && {
+        coordinates: located.coordinates,
+        coordinatesApproximate: located.approximate,
+      }),
     });
 
     res.status(201).json(store);
@@ -138,12 +166,20 @@ router.patch('/:id', protect, assertStoreOwnership, async (req, res) => {
     if (req.body.openingTime) updates.openingTime = req.body.openingTime;
     if (req.body.closingTime) updates.closingTime = req.body.closingTime;
 
-    // Allow updating coordinates if lat/lng provided
-    if (req.body.lat && req.body.lng) {
-      updates.coordinates = {
-        type: 'Point',
-        coordinates: [parseFloat(req.body.lng), parseFloat(req.body.lat)],
-      };
+    delete updates.lat;
+    delete updates.lng;
+
+    // Re-locate the store if it was given a pin, or its address changed.
+    const addressChanged = updates.address !== undefined && updates.address !== req.store.address;
+    if (readLatLng(req.body) || addressChanged) {
+      const located = await resolveStorePoint(req.body, updates.address ?? req.store.address);
+      if (located) {
+        updates.coordinates = located.coordinates;
+        updates.coordinatesApproximate = located.approximate;
+      } else if (addressChanged) {
+        // New address we couldn't find: better no position than the old, wrong one.
+        updates.$unset = { coordinates: 1 };
+      }
     }
 
     const updated = await Store.findByIdAndUpdate(req.params.id, updates, { new: true });
@@ -158,7 +194,7 @@ router.delete('/:id', protect, assertStoreOwnership, async (req, res) => {
   try {
     await Store.findByIdAndDelete(req.params.id);
     // Consider also cascading delete of MenuItems for this store.
-    const MenuItem = require('../models/MenuItem');
+    const MenuItem = require('../models/menuItemModel');
     await MenuItem.deleteMany({ storeId: req.params.id });
     res.json({ success: true });
   } catch (err) {

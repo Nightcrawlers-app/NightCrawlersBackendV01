@@ -67,6 +67,11 @@ const VendorSchema = new mongoose.Schema(
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     password: { type: String, required: true },
     location: { type: String, required: true },
+    // Where the business is, picked on the map at signup. [longitude, latitude].
+    coordinates: {
+      type: { type: String, enum: ['Point'] },
+      coordinates: { type: [Number], default: undefined },
+    },
     verified: { type: Boolean, default: false },
   },
   { timestamps: true }
@@ -84,6 +89,10 @@ VendorSchema.methods.comparePassword = function (candidate) {
 
 VendorSchema.methods.toSafeJSON = function () {
   const obj = this.toObject();
+  obj.id = String(obj._id);
+  const c = obj.coordinates?.coordinates;
+  obj.latitude = Array.isArray(c) && c.length === 2 ? c[1] : null;
+  obj.longitude = Array.isArray(c) && c.length === 2 ? c[0] : null;
   delete obj.password;
   delete obj.phoneVerificationCode;
   delete obj.phoneVerificationExpiry;

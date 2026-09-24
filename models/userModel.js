@@ -6,10 +6,12 @@ const AddressSchema = new mongoose.Schema({
   address: { type: String, required: true },
   city: { type: String, required: true },
   isDefault: { type: Boolean, default: false },
+  // GeoJSON point, [longitude, latitude]. `default: undefined` matters:
+  // without it Mongoose saves an empty array, which is not valid GeoJSON.
   coordinates: {
-    type: { type: String, enum: ['Point']},
-    coordinates: { type: [Number]},
-}
+    type: { type: String, enum: ['Point'] },
+    coordinates: { type: [Number], default: undefined },
+  },
 });
 
 const UserSchema = new mongoose.Schema(
@@ -47,8 +49,8 @@ const UserSchema = new mongoose.Schema(
     avatar: { type: String, default: null },
     location: { type: String, default: 'Abuja, Nigeria' },
     coordinates: {
-      type: { type: String, enum: ['Point']},
-      coordinates: { type: [Number]}, // [longitude, latitude]
+      type: { type: String, enum: ['Point'] },
+      coordinates: { type: [Number], default: undefined }, // [longitude, latitude]
     },
     addresses: [AddressSchema],
     favoriteVendors: [{ type: String }],
@@ -75,7 +77,9 @@ const UserSchema = new mongoose.Schema(
     loginCode: { type: String, default: null },
     loginCodeExpiry: { type: Date, default: null },
     loginCodeSentAt: { type: Date, default: null },
-    loginAttempts: { type: Number, default: 0 },
+    // Was `loginAttempts`, but every route reads/writes `loginCodeAttempts`,
+    // so the attempt limit on new-location codes never actually applied.
+    loginCodeAttempts: { type: Number, default: 0 },
   },
   { timestamps: { createdAt: 'joinedDate', updatedAt: true } }
 );
@@ -111,6 +115,19 @@ UserSchema.methods.toSafeJSON = function () {
   delete obj.loginCodeExpiry;
   delete obj.loginCodeSentAt;
   delete obj.loginCodeAttempts;
+
+  // Give the frontend plain ids and lat/lng instead of Mongo/GeoJSON shapes.
+  obj.id = String(obj._id);
+  const toLatLng = (point) =>
+    Array.isArray(point?.coordinates) && point.coordinates.length === 2
+      ? { latitude: point.coordinates[1], longitude: point.coordinates[0] }
+      : { latitude: null, longitude: null };
+  Object.assign(obj, toLatLng(obj.coordinates));
+  obj.addresses = (obj.addresses || []).map((a) => ({
+    ...a,
+    id: String(a._id),
+    ...toLatLng(a.coordinates),
+  }));
   return obj;
 };
 

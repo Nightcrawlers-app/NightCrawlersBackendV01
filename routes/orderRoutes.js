@@ -3,6 +3,7 @@ const router = express.Router();
 const Order = require('../models/orderModel');
 const Store = require('../models/storeModel');
 const { protect, requireRole, optionalAuth } = require('../middlewares/auth');
+const { geocodeAddress, readLatLng, toPoint } = require('../utils/geocoder');
 
 // POST /api/orders — create a new order (customer, or guest checkout)
 router.post('/', optionalAuth, async (req, res) => {
@@ -38,6 +39,11 @@ router.post('/', optionalAuth, async (req, res) => {
 
     const totalAmount = items.reduce((sum, i) => sum + i.price * i.quantity, 0);
 
+    // Delivery point: GPS/pin from checkout if sent, else geocode the address.
+    let delivery = readLatLng({ lat: req.body.customerLatitude, lng: req.body.customerLongitude });
+    if (!delivery) delivery = await geocodeAddress(customerAddress);
+    const pickup = store.coordinates?.coordinates?.length === 2 ? store.coordinates : undefined;
+
     const order = await Order.create({
       storeId,
       storeName: storeName || store.name,
@@ -51,6 +57,8 @@ router.post('/', optionalAuth, async (req, res) => {
       totalAmount,
       deliveryFee: deliveryFee || 0,
       status: 'pending',
+      ...(pickup && { pickupCoordinates: pickup }),
+      ...(delivery && { deliveryCoordinates: toPoint(delivery) }),
     });
 
     res.status(201).json(order);
@@ -58,6 +66,55 @@ router.post('/', optionalAuth, async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 });
+
+// GET /api/orders/pending?lat=..&lng=..&location=.. — ready orders for riders.
+// With coordinates: nearest pickup first, within `radius` metres (default 15km).
+// Without: falls back to matching the location text. Must stay above /:id.
+const listPendingForRider = async (req, res) => {
+  try {
+    const { location, radius } = req.query;
+    const query = { status: 'ready', riderId: null };
+    const point = readLatLng(req.query);
+
+    if (point) {
+      const maxDistance = Math.min(parseInt(radius, 10) || 15000, 50000);
+      const near = await Order.aggregate([
+        {
+          $geoNear: {
+            near: { type: 'Point', coordinates: [point.longitude, point.latitude] },
+            distanceField: 'distanceMeters',
+            maxDistance,
+            spherical: true,
+            query,
+          },
+        },
+      ]);
+      // Orders whose store has no coordinates can't be ranked — list them after.
+      const unlocated = await Order.find({ ...query, pickupCoordinates: { $exists: false } })
+        .sort({ createdAt: 1 })
+        .lean();
+      return res.json([
+        ...near.map(({ distanceMeters, ...o }) => ({
+          ...o,
+          id: String(o._id),
+          distance: Math.round((distanceMeters / 1000) * 10) / 10,
+        })),
+        ...unlocated.map((o) => ({ ...o, id: String(o._id), distance: null })),
+      ]);
+    }
+
+    if (location) {
+      const escaped = String(location).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      query.customerLocation = { $regex: escaped, $options: 'i' };
+    }
+    const orders = await Order.find(query).sort({ createdAt: 1 });
+    res.json(orders);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+router.get('/pending', protect, requireRole('rider'), listPendingForRider);
 
 // GET /api/orders/:id
 router.get('/:id', protect, async (req, res) => {
@@ -79,23 +136,8 @@ router.get('/:id', protect, async (req, res) => {
   }
 });
 
-// GET /api/orders/pending?location=... — pending orders available to riders nearby
-router.get('/pending/list', protect, requireRole('rider'), async (req, res) => {
-  try {
-    const { location } = req.query;
-    const query = { status: 'ready', riderId: null };
-
-    // Simple location matching; in production, use geo queries with coordinates.
-    if (location) {
-      query.customerLocation = { $regex: location, $options: 'i' };
-    }
-
-    const orders = await Order.find(query).sort({ createdAt: 1 });
-    res.json(orders);
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
-});
+// Old path, kept so existing clients don't break.
+router.get('/pending/list', protect, requireRole('rider'), listPendingForRider);
 
 // POST /api/orders/:id/accept — rider accepts an order
 router.post('/:id/accept', protect, requireRole('rider'), async (req, res) => {

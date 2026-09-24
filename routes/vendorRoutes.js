@@ -1,24 +1,14 @@
 const express = require('express');
 const router = express.Router();
 const Vendor = require('../models/vendorModel');
+const { BUSINESS_TYPES } = require('../models/vendorModel');
+const { geocodeAddress, readLatLng, toPoint } = require('../utils/geocoder');
 const { signToken } = require('../utils/signToken');
-const { protect, requireRole, setAuthCookie, clearAuthCookie } = require('../middlewares/auth');
+const { protect, requireRole } = require('../middlewares/auth');
 const { sendVendorWelcomeEmail } = require('../utils/mailer');
 
-const resolveBusinessType = (input) => {
-  const normalized = (input || '').toLowerCase().trim();
-  const map = [
-    { type: 'Food', keywords: ['food', 'restaurant', 'resto', 'cafe', 'kitchen', 'diner', 'meal'] },
-    { type: 'Groceries', keywords: ['grocery', 'supermarket', 'market', 'mart', 'grocer'] },
-    { type: 'Pharmacy', keywords: ['pharmacy', 'chemist', 'drug', 'medicine', 'med'] },
-    { type: 'Drinks', keywords: ['drink', 'drinks', 'beverage', 'liquor', 'wine', 'alcohol'] },
-    { type: 'Clubs/Lounges', keywords: ['club', 'lounge', 'nightlife', 'bar'] },
-  ];
-  for (const entry of map) {
-    if (entry.keywords.some((kw) => normalized.includes(kw))) return entry.type;
-  }
-  return 'Food';
-};
+// GET /api/vendors/business-types — the allowed values, for the signup dropdown
+router.get('/business-types', (req, res) => res.json(BUSINESS_TYPES));
 
 // POST /api/vendors — create vendor account
 router.post('/', async (req, res) => {
@@ -29,32 +19,41 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ message: 'email, password and location are required.' });
     }
 
+    // The signup form now sends one of the exact values from a dropdown.
+    // Anything else is rejected rather than silently guessed as 'Food'.
+    if (!BUSINESS_TYPES.includes(businessType)) {
+      return res.status(400).json({
+        message: `Please choose a business type: ${BUSINESS_TYPES.join(', ')}.`,
+        allowed: BUSINESS_TYPES,
+      });
+    }
+
     const existing = await Vendor.findOne({ email: email.toLowerCase() });
     if (existing) {
       return res.status(409).json({ message: 'Email address is already in use.' });
     }
 
+    // Pin from the signup map, else geocode the typed location.
+    const point = readLatLng(req.body) || (await geocodeAddress(location));
+
     const vendor = await Vendor.create({
       firstName,
       lastName,
-      businessType: resolveBusinessType(businessType),
-      businessTypeRaw: businessType || '',
+      businessType,
+      businessTypeRaw: businessType,
       phoneNumber,
       email,
       location,
       password,
       verified: false,
+      ...(point && { coordinates: toPoint(point) }),
     });
 
+     // Fire-and-forget welcome email
     sendVendorWelcomeEmail(vendor.email, vendor.firstName, vendor.businessTypeRaw || vendor.businessType)
       .catch(err => console.error('Vendor welcome email failed:', err.message));
 
     const token = signToken(vendor._id, 'vendor');
-
-    // ── Set httpOnly cookie (secure) ──────────────────────────────────────────
-    setAuthCookie(res, token, 'vendor');
-
-    // Still return token in body so Jest supertest tests keep working without cookies
     res.status(201).json({ token, vendor: vendor.toSafeJSON() });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -71,20 +70,10 @@ router.post('/login', async (req, res) => {
     }
 
     const token = signToken(vendor._id, 'vendor');
-
-    // ── Set httpOnly cookie (secure) ──────────────────────────────────────────
-    setAuthCookie(res, token, 'vendor');
-
     res.json({ token, vendor: vendor.toSafeJSON() });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
-});
-
-// POST /api/vendors/logout  ← NEW
-router.post('/logout', (req, res) => {
-  clearAuthCookie(res, 'vendor');
-  res.json({ success: true });
 });
 
 // GET /api/vendors/me
@@ -93,6 +82,21 @@ router.get('/me', protect, requireRole('vendor'), async (req, res) => {
     const vendor = await Vendor.findById(req.user.id);
     if (!vendor) return res.status(404).json({ message: 'Vendor not found' });
     res.json(vendor.toSafeJSON());
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// GET /api/vendors/:vendorId/stores — the frontend's vendor dashboard calls
+// this path, but it was never mounted (only /api/stores/vendor/:id existed).
+router.get('/:vendorId/stores', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && String(req.user.id) !== req.params.vendorId) {
+      return res.status(403).json({ message: 'Forbidden' });
+    }
+    const Store = require('../models/storeModel');
+    const stores = await Store.find({ vendorId: req.params.vendorId }).sort({ createdAt: -1 });
+    res.json(stores);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

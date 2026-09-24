@@ -30,6 +30,15 @@ const OrderSchema = new mongoose.Schema(
     customerPhone: { type: String, required: true },
     customerLocation: { type: String, required: true },
     customerAddress: { type: String, required: true },
+    // Positions for rider matching and navigation. [longitude, latitude].
+    pickupCoordinates: {
+      type: { type: String, enum: ['Point'] },
+      coordinates: { type: [Number], default: undefined },
+    },
+    deliveryCoordinates: {
+      type: { type: String, enum: ['Point'] },
+      coordinates: { type: [Number], default: undefined },
+    },
     riderId: { type: mongoose.Schema.Types.ObjectId, ref: 'Rider', default: null, index: true },
     items: [OrderItemSchema],
     totalAmount: { type: Number, required: true },
@@ -41,6 +50,9 @@ const OrderSchema = new mongoose.Schema(
   },
   { timestamps: { createdAt: 'createdAt', updatedAt: true } }
 );
+
+// Riders search for ready orders by pickup (store) location.
+OrderSchema.index({ pickupCoordinates: '2dsphere' });
 
 module.exports = mongoose.model('Order', OrderSchema);
 module.exports.ORDER_STATUSES = ORDER_STATUSES;

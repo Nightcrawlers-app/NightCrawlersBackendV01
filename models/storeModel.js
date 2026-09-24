@@ -33,18 +33,20 @@ const StoreSchema = new mongoose.Schema(
       default: null,
       match: [/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/, 'Please use HH:mm format']
      },
-    // GeoJSON point for $near queries
+    // GeoJSON point for proximity search. [longitude, latitude].
+    //
+    // There used to be a default of central Abuja here. That meant every store
+    // whose address wasn't geocoded got pinned to the same spot, so "near me"
+    // showed Lagos stores to Abuja users and nothing to Lagos users. Now a
+    // store with no known position simply has no coordinates and is left out
+    // of distance searches until its address is geocoded.
     coordinates: {
-      type: {
-        type: String,
-        enum: ['Point'],
-        default: 'Point',
-      },
-      coordinates: {
-        type: [Number], // [longitude, latitude]
-        default: [7.4985, 9.0563], // Abuja default
-      },
+      type: { type: String, enum: ['Point'] },
+      coordinates: { type: [Number], default: undefined },
     },
+    // True when the position came from geocoding the address text rather
+    // than a pin/GPS fix — useful for spotting stores worth double-checking.
+    coordinatesApproximate: { type: Boolean, default: false },
   }, { timestamps: { createdAt: 'createdAt', updatedAt: true } }
 );
 
@@ -88,6 +90,9 @@ StoreSchema.set('toJSON', {
   virtuals: true,
   transform: (doc, ret) => {
     ret.status = doc.getStatus();
+    const c = doc.coordinates?.coordinates;
+    ret.latitude = Array.isArray(c) && c.length === 2 ? c[1] : null;
+    ret.longitude = Array.isArray(c) && c.length === 2 ? c[0] : null;
     // Return display strings as well for convenience
     ret.openingTimeDisplay = doc.is24Hours
       ? '24 Hours'

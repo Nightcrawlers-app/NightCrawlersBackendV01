@@ -21,7 +21,10 @@ const checkCooldown = (sentAt) => {
  * Returns { valid: true } or { valid: false, status, message }.
  */
 const validateCode = (stored, submitted, expiry, attempts) => {
-  if (attempts >= MAX_ATTEMPTS) {
+  // Callers increment `attempts` before calling, so > (not >=) gives the
+  // user the full MAX_ATTEMPTS tries instead of MAX_ATTEMPTS - 1.
+  submitted = String(submitted ?? '').trim();
+  if (attempts > MAX_ATTEMPTS) {
     return { valid: false, status: 429, message: 'Too many attempts. Please request a new code.' };
   }
   if (!stored || stored !== submitted) {
