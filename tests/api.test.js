@@ -175,6 +175,15 @@ const registerRider = async (overrides = {}) => {
   return request(app).post('/api/riders').send({ ...defaults, ...overrides });
 };
 
+/** Add a real menu item and return its id — orders only accept real menu items. */
+const addMenuItem = async (vendorToken, storeId, name = 'Item', price = 1000) => {
+  const res = await request(app)
+    .post('/api/menu-items')
+    .set('Authorization', `Bearer ${vendorToken}`)
+    .send({ storeId, name, price, imageUrl: 'https://x.com/food.jpg' });
+  return res.body._id;
+};
+
 const createAdmin = async () => {
   const Admin = require('../models/adminModel');
   const admin = await Admin.create({
@@ -439,8 +448,7 @@ describe('Phone Verification', () => {
           customerPhone: '08012345678',
           customerAddress: 'Test Address',
           customerLocation: 'Abuja',
-          items: [{ name: 'Item', quantity: 1, price: 1000 }],
-          deliveryFee: 300,
+          items: [{ menuItemId: await addMenuItem(vendorReg.body.token, store.body._id), quantity: 1 }],
         });
  
       expect(res.status).toBe(403);
@@ -460,14 +468,28 @@ describe('Phone Verification', () => {
         customerPhone: '08099998888',
         customerAddress: 'Guest Address',
         customerLocation: 'Abuja',
-        items: [{ name: 'Item', quantity: 1, price: 1000 }],
-        deliveryFee: 300,
+        items: [{ menuItemId: await addMenuItem(vendorReg.body.token, store.body._id), quantity: 1 }],
       });
  
       expect(res.status).toBe(201);
     });
   });
  
+  describe('Setting the number', () => {
+    it('a vendor with no number can add one, then verify it', async () => {
+      const reg = await registerVendor({ email: 'nophone@test.com' });
+      const token = reg.body.token;
+      const bad = await request(app).post('/api/vendors/me/phone/number').set('Authorization', `Bearer ${token}`).send({ phone: '123' });
+      expect(bad.status).toBe(400);
+      const ok = await request(app).post('/api/vendors/me/phone/number').set('Authorization', `Bearer ${token}`).send({ phone: '0803 123 4567' });
+      expect(ok.status).toBe(200);
+      expect(ok.body.phone).toBe('08031234567');
+      await request(app).post('/api/vendors/me/phone/send').set('Authorization', `Bearer ${token}`);
+      const verified = await request(app).post('/api/vendors/me/phone/verify').set('Authorization', `Bearer ${token}`).send({ code: '654321' });
+      expect(verified.status).toBe(200);
+    });
+  });
+
   describe('Vendor phone verification', () => {
     it('POST /api/vendors/me/phone/send and /verify works', async () => {
       const reg = await registerVendor({ email: 'vendorphone@test.com', phoneNumber: '08011112222' });
@@ -629,6 +651,22 @@ describe('Stores', () => {
     expect(res.body[0].name).toBe('Pizza Palace');
   });
 
+  it('GET /api/stores?search= also finds stores by the dishes they sell', async () => {
+    const store = await request(app)
+      .post('/api/stores')
+      .set('Authorization', `Bearer ${vendorToken}`)
+      .send({ name: 'Mama Put', address: 'Wuse', imageUrl: 'https://example.com/img.jpg' });
+    await addMenuItem(vendorToken, store.body._id, 'Chicken Shawarma', 2500);
+
+    const res = await request(app).get('/api/stores?search=shawarma');
+    expect(res.body.map((s) => s.name)).toEqual(['Mama Put']);
+    expect(res.body[0].matchedItems).toEqual(['Chicken Shawarma']);
+
+    // Regex characters in the search box must not crash the server
+    const weird = await request(app).get('/api/stores?search=' + encodeURIComponent('(shawarma['));
+    expect(weird.status).toBe(200);
+  });
+
   it('GET /api/stores returns status field on each store', async () => {
     await request(app)
       .post('/api/stores')
@@ -698,31 +736,82 @@ describe('Menu Items', () => {
 describe('Orders', () => {
   let storeId;
   let vendorId;
+  let vendorToken;
+  let shawarmaId;
 
   beforeEach(async () => {
     const reg = await registerVendor();
     vendorId = reg.body.vendor._id;
+    vendorToken = reg.body.token;
     const store = await request(app)
       .post('/api/stores')
       .set('Authorization', `Bearer ${reg.body.token}`)
       .send({ name: 'Order Test Store', address: 'Abuja', imageUrl: 'https://x.com/img.jpg' });
     storeId = store.body._id;
+    shawarmaId = await addMenuItem(vendorToken, storeId, 'Shawarma', 1200);
   });
 
-  it('POST /api/orders creates an order as guest', async () => {
-    const res = await request(app).post('/api/orders').send({
+  const placeOrder = (items, extra = {}) =>
+    request(app).post('/api/orders').send({
       storeId,
       customerName: 'Amaka Obi',
       customerPhone: '08012345678',
       customerAddress: '5 Nnamdi Azikiwe Way, Abuja',
       customerLocation: 'Abuja, Nigeria',
-      items: [{ name: 'Shawarma', quantity: 2, price: 1200 }],
-      deliveryFee: 500,
+      items,
+      ...extra,
     });
-    console.log('ORDER ERROR:',res.body); // Debugging line REMOVE IN PROD
+
+  it('POST /api/orders creates an order as guest', async () => {
+    const res = await placeOrder([{ menuItemId: shawarmaId, quantity: 2 }]);
     expect(res.status).toBe(201);
     expect(res.body.totalAmount).toBe(2400);
+    expect(res.body.items[0].name).toBe('Shawarma');
     expect(res.body.status).toBe('pending');
+  });
+
+  it('uses menu prices, ignoring prices and fees sent by the browser', async () => {
+    const res = await placeOrder(
+      [{ menuItemId: shawarmaId, quantity: 2, price: 5, name: 'Free food' }],
+      { deliveryFee: 0 },
+    );
+    expect(res.status).toBe(201);
+    expect(res.body.items[0]).toMatchObject({ name: 'Shawarma', price: 1200, quantity: 2 });
+    expect(res.body.totalAmount).toBe(2400);
+    expect(res.body.deliveryFee).toBe(800);
+    expect(res.body.serviceFee).toBe(120);   // 5% of 2400
+    expect(res.body.totalPaid).toBe(3320);   // 2400 + 800 + 120
+  });
+
+  it('POST /api/orders/quote matches what the order will charge', async () => {
+    const quote = await request(app)
+      .post('/api/orders/quote')
+      .send({ storeId, items: [{ menuItemId: shawarmaId, quantity: 2 }], promotionId: '000000000000000000000000' });
+    expect(quote.status).toBe(200);
+    expect(quote.body).toMatchObject({ subtotal: 2400, deliveryFee: 800, serviceFee: 120, discount: 0, total: 3320 });
+    // A bad promo is reported on a quote, not an error
+    expect(quote.body.promotion.eligible).toBe(false);
+  });
+
+  it('rejects items from another store, unknown items and bad quantities', async () => {
+    const other = await registerVendor({ email: 'other-shop@test.com' });
+    const otherStore = await request(app)
+      .post('/api/stores')
+      .set('Authorization', `Bearer ${other.body.token}`)
+      .send({ name: 'Other Shop', address: 'Abuja', imageUrl: 'https://x.com/i.jpg' });
+    const foreignItem = await addMenuItem(other.body.token, otherStore.body._id, 'Cheap thing', 10);
+
+    const foreign = await placeOrder([{ menuItemId: foreignItem, quantity: 1 }]);
+    expect(foreign.status).toBe(400);
+    expect(foreign.body.cartInvalid).toBe(true);
+
+    const noId = await placeOrder([{ name: 'Shawarma', quantity: 1, price: 1 }]);
+    expect(noId.status).toBe(400);
+
+    for (const quantity of [0, -3, 1.5, 999]) {
+      const bad = await placeOrder([{ menuItemId: shawarmaId, quantity }]);
+      expect(bad.status).toBe(400);
+    }
   });
 
   it('POST /api/orders returns 400 if required fields missing', async () => {
@@ -744,15 +833,13 @@ describe('Orders', () => {
       customerPhone: '08098765432',
       customerAddress: 'Jabi, Abuja',
       customerLocation: 'Abuja, Nigeria',
-      items: [{ name: 'Rice', quantity: 1, price: 1000 }],
-      deliveryFee: 300,
+      items: [{ menuItemId: await addMenuItem(vendorToken, store2.body._id, 'Rice', 1000), quantity: 1 }],
     });
 
     const res = await request(app)
       .patch(`/api/orders/${order.body._id}/status`)
       .set('Authorization', `Bearer ${vendorToken}`)
       .send({ status: 'preparing' });
-    console.log('STATUS ERROR:', res.body); // Debugging line REMOVE IN PROD
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('preparing');
   });
@@ -775,6 +862,15 @@ describe('Admin', () => {
     expect(res.body).toHaveProperty('totalVendors');
     expect(res.body).toHaveProperty('totalRiders');
     expect(res.body).toHaveProperty('totalRevenue');
+  });
+
+  it('order stats load at both /order-stats and /orders/stats', async () => {
+    const { token } = await createAdmin();
+    for (const path of ['/api/admin/order-stats', '/api/admin/orders/stats']) {
+      const res = await request(app).get(path).set('Authorization', `Bearer ${token}`);
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty('totalOrders');
+    }
   });
 
   it('GET /api/admin/stats is blocked for non-admin', async () => {
@@ -1439,5 +1535,94 @@ describe('Signup location pins', () => {
     const r = await registerRider({ latitude: 6.45, longitude: 3.47 });
     expect(r.status).toBe(201);
     expect(r.body.rider.longitude).toBeCloseTo(3.47);
+  });
+});
+
+// ── Promotions ───────────────────────────────────────────────────────────────
+
+describe('Promotions', () => {
+  let adminToken;
+  let storeId;
+  let otherStoreId;
+  let burgerId;
+
+  beforeEach(async () => {
+    adminToken = (await createAdmin()).token;
+    const vendorToken = (await registerVendor({ email: 'promo-vendor@test.com' })).body.token;
+    const mk = (name) =>
+      request(app)
+        .post('/api/stores')
+        .set('Authorization', `Bearer ${vendorToken}`)
+        .send({ name, address: 'Wuse, Abuja', imageUrl: 'https://x.com/i.jpg' });
+    storeId = (await mk('Promo Store')).body._id;
+    otherStoreId = (await mk('Other Store')).body._id;
+    burgerId = await addMenuItem(vendorToken, storeId, 'Burger', 3000);
+  });
+
+  const createPromo = (body) =>
+    request(app).post('/api/admin/promotions').set('Authorization', `Bearer ${adminToken}`).send(body);
+
+  const order = (extra = {}) =>
+    request(app).post('/api/orders').send({
+      storeId,
+      customerName: 'Ada',
+      customerPhone: '08012345678',
+      customerAddress: 'Wuse, Abuja',
+      items: [{ menuItemId: burgerId, quantity: 2 }],
+      ...extra,
+    });
+
+  it('only admins can create promos', async () => {
+    const res = await request(app).post('/api/admin/promotions').send({ title: 'x', discountType: 'fixed', discountValue: 1 });
+    expect(res.status).toBe(401);
+  });
+
+  it('shows live promos, filters stores by promo, and badges store cards', async () => {
+    const promo = (await createPromo({
+      title: '50% off at Promo Store', badge: '50% OFF', discountType: 'percent', discountValue: 50,
+      scope: 'stores', storeIds: [storeId],
+    })).body;
+    await createPromo({ title: 'Old', discountType: 'fixed', discountValue: 100, endsAt: '2020-01-01' });
+
+    const live = await request(app).get('/api/promotions');
+    expect(live.body.map((p) => p.title)).toEqual(['50% off at Promo Store']);
+
+    const stores = await request(app).get(`/api/stores?promotion=${promo.id}`);
+    expect(stores.body.map((s) => s.name)).toEqual(['Promo Store']);
+    expect(stores.body[0].promotions[0].badge).toBe('50% OFF');
+  });
+
+  it('applies a percent promo on the server, capped by maxDiscount', async () => {
+    const promo = (await createPromo({
+      title: 'Half off', discountType: 'percent', discountValue: 50, maxDiscount: 2000,
+    })).body;
+    const res = await order({ promotionId: promo.id });
+    expect(res.status).toBe(201);
+    expect(res.body.discountAmount).toBe(2000); // 50% of 6000 = 3000, capped at 2000
+    expect(res.body.promotionTitle).toBe('Half off');
+  });
+
+  it('free delivery waives the delivery fee', async () => {
+    const promo = (await createPromo({ title: 'Free delivery', discountType: 'free_delivery' })).body;
+    const res = await order({ promotionId: promo.id });
+    expect(res.body.discountAmount).toBe(800);
+  });
+
+  it('rejects a promo for the wrong store or below the minimum order', async () => {
+    const onlyOther = (await createPromo({
+      title: 'Other only', discountType: 'fixed', discountValue: 500, scope: 'stores', storeIds: [otherStoreId],
+    })).body;
+    const wrongStore = await order({ promotionId: onlyOther.id });
+    expect(wrongStore.status).toBe(400);
+    expect(wrongStore.body.promotionInvalid).toBe(true);
+
+    const bigMin = (await createPromo({
+      title: 'Big spenders', discountType: 'fixed', discountValue: 500, minOrderAmount: 10000,
+    })).body;
+    const quote = await request(app)
+      .post(`/api/promotions/${bigMin.id}/quote`)
+      .send({ storeId, subtotal: 6000, deliveryFee: 800 });
+    expect(quote.body.eligible).toBe(false);
+    expect(quote.body.amountNeeded).toBe(4000);
   });
 });

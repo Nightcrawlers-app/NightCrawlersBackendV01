@@ -2,8 +2,27 @@ const express = require('express');
 const router = express.Router();
 const Order = require('../models/orderModel');
 const Store = require('../models/storeModel');
+const { priceOrder, PricingError } = require('../utils/orderPricing');
 const { protect, requireRole, optionalAuth } = require('../middlewares/auth');
 const { geocodeAddress, readLatLng, toPoint } = require('../utils/geocoder');
+
+// POST /api/orders/quote — { storeId, items: [{ menuItemId, quantity }], promotionId? }
+// The exact breakdown checkout should show. Same maths as placing the order.
+router.post('/quote', async (req, res) => {
+  try {
+    const { storeId, items, promotionId } = req.body;
+    if (!require('mongoose').isValidObjectId(storeId)) return res.status(404).json({ message: 'Store not found' });
+    const store = await Store.findById(storeId);
+    if (!store) return res.status(404).json({ message: 'Store not found' });
+
+    const priced = await priceOrder({ store, items, promotionId, strictPromo: false });
+    delete priced.promo;
+    res.json(priced);
+  } catch (err) {
+    if (err instanceof PricingError) return res.status(400).json({ message: err.message, ...err.extra });
+    res.status(500).json({ message: err.message });
+  }
+});
 
 // POST /api/orders — create a new order (customer, or guest checkout)
 router.post('/', optionalAuth, async (req, res) => {
@@ -27,17 +46,26 @@ router.post('/', optionalAuth, async (req, res) => {
       customerLocation,
       customerAddress,
       items,
-      deliveryFee,
     } = req.body;
 
     if (!storeId || !customerName || !customerPhone || !customerAddress || !items?.length) {
       return res.status(400).json({ message: 'Missing required order fields.' });
     }
 
+    if (!require('mongoose').isValidObjectId(storeId)) {
+      return res.status(404).json({ message: 'Store not found' });
+    }
     const store = await Store.findById(storeId);
     if (!store) return res.status(404).json({ message: 'Store not found' });
 
-    const totalAmount = items.reduce((sum, i) => sum + i.price * i.quantity, 0);
+    // All money is worked out on the server — see utils/orderPricing.js.
+    let priced;
+    try {
+      priced = await priceOrder({ store, items, promotionId: req.body.promotionId, strictPromo: true });
+    } catch (err) {
+      if (err instanceof PricingError) return res.status(400).json({ message: err.message, ...err.extra });
+      throw err;
+    }
 
     // Delivery point: GPS/pin from checkout if sent, else geocode the address.
     let delivery = readLatLng({ lat: req.body.customerLatitude, lng: req.body.customerLongitude });
@@ -51,13 +79,21 @@ router.post('/', optionalAuth, async (req, res) => {
       customerId: req.user?.role === 'customer' ? req.user.id : null,
       customerName,
       customerPhone,
-      customerLocation: customerLocation || '',
+      customerLocation: customerLocation || delivery?.city || '',
       customerAddress,
-      items,
-      totalAmount,
-      deliveryFee: deliveryFee || 0,
+      items: priced.items,
+      totalAmount: priced.subtotal, // food subtotal (kept as totalAmount for existing reports)
+      deliveryFee: priced.deliveryFee,
+      serviceFee: priced.serviceFee,
+      totalPaid: priced.total,      // what the customer pays
       status: 'pending',
       ...(pickup && { pickupCoordinates: pickup }),
+      ...(priced.promo && {
+        promotionId: priced.promo._id,
+        promotionTitle: priced.promo.title,
+        discountAmount: priced.discount,
+        discountFundedBy: priced.promo.fundedBy,
+      }),
       ...(delivery && { deliveryCoordinates: toPoint(delivery) }),
     });
 

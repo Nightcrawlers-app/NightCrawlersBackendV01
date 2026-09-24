@@ -23,6 +23,7 @@ const vendorKycRoutes = require('./routes/vendorKycRoutes');
 const adminKycRoutes = require('./routes/adminKycRoutes');
 const geoRoutes = require('./routes/geoRoutes');
 const contactRoutes = require('./routes/contactRoutes');
+const promotionRoutes = require('./routes/promotionRoutes');
 const swaggerUi = require("swagger-ui-express");
 const swaggerFile = require("./swagger-output.json");
 
@@ -62,6 +63,10 @@ app.use('/api/admin', adminKycRoutes);       // GET/POST /api/admin/kyc/...
  
 // ─── Geocoding (address search / reverse lookup) ────────────────────────────
 app.use('/api/geo', geoRoutes);           // GET /api/geo/search, /api/geo/reverse
+
+// ─── Promotions ─────────────────────────────────────────────────────────────
+app.use('/api/promotions', promotionRoutes.publicRouter);        // live promos, quotes
+app.use('/api/admin/promotions', promotionRoutes.adminRouter);   // admin CRUD
 
 // ─── Marketing site ─────────────────────────────────────────────────────────
 app.use('/api', contactRoutes);           // POST /api/contact, POST /api/newsletter

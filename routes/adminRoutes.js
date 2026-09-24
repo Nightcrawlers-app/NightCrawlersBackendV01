@@ -48,7 +48,7 @@ router.get('/stats', async (req, res) => {
 
     const revenueAgg = await Order.aggregate([
       { $match: { status: 'delivered' } },
-      { $group: { _id: null, total: { $sum: { $add: ['$totalAmount', '$deliveryFee'] } } } },
+      { $group: { _id: null, total: { $sum: { $ifNull: ['$totalPaid', { $add: ['$totalAmount', '$deliveryFee'] }] } } } },
     ]);
 
     res.json({
@@ -234,6 +234,13 @@ router.get('/orders', async (req, res) => {
   res.json(orders);
 });
 
+// The frontend has always called /orders/stats; the route was built as
+// /order-stats. Accept both so the admin dashboard loads either way.
+router.get('/orders/stats', (req, res, next) => {
+  req.url = '/order-stats';
+  next();
+});
+
 // ─── GET /api/admin/order-stats ─────────────────────────────────────────────────
 router.get('/order-stats', async (req, res) => {
   try {
@@ -252,11 +259,11 @@ router.get('/order-stats', async (req, res) => {
 
     const revenueAgg = await Order.aggregate([
       { $match: { status: 'delivered' } },
-      { $group: { _id: null, total: { $sum: { $add: ['$totalAmount', '$deliveryFee'] } } } },
+      { $group: { _id: null, total: { $sum: { $ifNull: ['$totalPaid', { $add: ['$totalAmount', '$deliveryFee'] }] } } } },
     ]);
     const todayRevenueAgg = await Order.aggregate([
       { $match: { status: 'delivered', deliveredAt: { $gte: today } } },
-      { $group: { _id: null, total: { $sum: { $add: ['$totalAmount', '$deliveryFee'] } } } },
+      { $group: { _id: null, total: { $sum: { $ifNull: ['$totalPaid', { $add: ['$totalAmount', '$deliveryFee'] }] } } } },
     ]);
 
     res.json({

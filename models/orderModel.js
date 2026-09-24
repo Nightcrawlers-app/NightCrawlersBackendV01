@@ -13,6 +13,9 @@ const ORDER_STATUSES = [
 
 const OrderItemSchema = new mongoose.Schema(
   {
+    // Which menu item this was. Name and price are copied from the menu at
+    // order time, so later menu edits don't change past orders.
+    menuItemId: { type: mongoose.Schema.Types.ObjectId, ref: 'MenuItem', default: null },
     name: { type: String, required: true },
     quantity: { type: Number, required: true },
     price: { type: Number, required: true },
@@ -28,7 +31,9 @@ const OrderSchema = new mongoose.Schema(
     customerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     customerName: { type: String, required: true },
     customerPhone: { type: String, required: true },
-    customerLocation: { type: String, required: true },
+    // City/area label. Optional: the address and coordinates are what riders
+    // use. Requiring it crashed any order placed without one (500 error).
+    customerLocation: { type: String, default: '' },
     customerAddress: { type: String, required: true },
     // Positions for rider matching and navigation. [longitude, latitude].
     pickupCoordinates: {
@@ -43,6 +48,15 @@ const OrderSchema = new mongoose.Schema(
     items: [OrderItemSchema],
     totalAmount: { type: Number, required: true },
     deliveryFee: { type: Number, required: true },
+    serviceFee: { type: Number, default: 0 },
+    // Everything the customer pays: food + delivery + service − discount.
+    // (totalAmount above is the food subtotal only.)
+    totalPaid: { type: Number, default: null },
+    // Promotion applied at checkout (recalculated on the server, never trusted from the browser)
+    promotionId: { type: mongoose.Schema.Types.ObjectId, ref: 'Promotion', default: null },
+    promotionTitle: { type: String, default: null },
+    discountAmount: { type: Number, default: 0 },
+    discountFundedBy: { type: String, enum: ['platform', 'vendor', null], default: null },
     status: { type: String, enum: ORDER_STATUSES, default: 'pending', index: true },
     acceptedAt: { type: Date, default: null },
     pickedUpAt: { type: Date, default: null },

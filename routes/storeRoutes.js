@@ -16,6 +16,21 @@ const resolveStorePoint = async (body, address) => {
 };
 
 const MAX_RADIUS_M = 50000;
+
+/**
+ * Add a `promotions` list ({ id, badge, title }) to each store so cards can
+ * show "50% OFF" badges. Live promos are few, so this is one small query.
+ */
+const withPromotions = async (stores) => {
+  const Promotion = require('../models/promotionModel');
+  const live = await Promotion.findLive();
+  return stores.map((s) => ({
+    ...s,
+    promotions: live
+      .filter((p) => p.appliesToStore(s))
+      .map((p) => ({ id: String(p._id), badge: p.badge || p.title, title: p.title })),
+  }));
+};
 const { 
   protect, 
   requireRole, 
@@ -50,20 +65,51 @@ const assertStoreOwnership = async (req, res, next) => {
 // Supports: ?category=Food, ?search=pizza, ?lat=6.5&lng=3.3&radius=5000
 router.get('/', optionalAuth, async (req, res) => {
   try {
-    const { category, search, lat, lng, radius } = req.query;
+    const { category, search, lat, lng, radius, promotion } = req.query;
     const query = {};
+
+    // ?promotion=<id> — only stores that promo covers (tapping a promo banner)
+    if (promotion) {
+      const Promotion = require('../models/promotionModel');
+      const promo = require('mongoose').isValidObjectId(promotion)
+        ? await Promotion.findById(promotion)
+        : null;
+      if (!promo || !promo.isLive()) return res.json([]);
+      if (promo.scope === 'category') query.businessType = promo.businessType;
+      if (promo.scope === 'stores') query._id = { $in: promo.storeIds };
+    }
 
     if (category && category !== 'All') {
       query.businessType = category;
     }
 
-    if (search) {
+    // ?search= matches store name/description/categories AND the dishes on
+    // their menus, so "shawarma" finds every store that sells shawarma.
+    let menuMatches = null; // storeId → matching dish names
+    const term = String(search || '').trim().slice(0, 60);
+    if (term) {
+      // Escape it: raw user text in a regex let "(" crash the request.
+      const rx = new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      const MenuItem = require('../models/menuItemModel');
+      const dishes = await MenuItem.find({ $or: [{ name: rx }, { categories: rx }] }, 'storeId name').limit(500).lean();
+      menuMatches = new Map();
+      for (const d of dishes) {
+        const key = String(d.storeId);
+        if (!menuMatches.has(key)) menuMatches.set(key, []);
+        menuMatches.get(key).push(d.name);
+      }
       query.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { description: { $regex: search, $options: 'i' } },
-        { categories: { $regex: search, $options: 'i' } },
+        { name: rx },
+        { description: rx },
+        { categories: rx },
+        { _id: { $in: dishes.map((d) => d.storeId) } },
       ];
     }
+    // Adds `matchedItems` (up to 3 dish names) so the card can say why it matched.
+    const withMatches = (list) =>
+      menuMatches
+        ? list.map((s) => ({ ...s, matchedItems: (menuMatches.get(String(s._id)) || []).slice(0, 3) }))
+        : list;
 
     // Where is the customer? Prefer real coordinates; otherwise try to
     // geocode the address text they picked (e.g. "Wuse 2, Abuja").
@@ -74,7 +120,7 @@ router.get('/', optionalAuth, async (req, res) => {
 
     if (!point) {
       const stores = await Store.find(query).sort({ createdAt: -1 });
-      return res.json(stores);
+      return res.json(await withPromotions(withMatches(stores.map((s) => s.toJSON()))));
     }
 
     // $geoNear sorts nearest-first and gives us the distance for each store.
@@ -92,10 +138,12 @@ router.get('/', optionalAuth, async (req, res) => {
     ]);
 
     res.json(
-      results.map(({ distanceMeters, ...raw }) => ({
-        ...Store.hydrate(raw).toJSON(),
-        distance: Math.round((distanceMeters / 1000) * 10) / 10, // km, 1 decimal
-      }))
+      await withPromotions(withMatches(
+        results.map(({ distanceMeters, ...raw }) => ({
+          ...Store.hydrate(raw).toJSON(),
+          distance: Math.round((distanceMeters / 1000) * 10) / 10, // km, 1 decimal
+        }))
+      ))
     );
   } catch (err) {
     res.status(500).json({ message: err.message });

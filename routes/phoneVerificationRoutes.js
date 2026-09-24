@@ -27,6 +27,35 @@ const createPhoneVerificationRoutes = (Model, role) => {
   // All phone verification routes require the user to already be logged in
   router.use(protect);
 
+  // Customers store their number as `phone`, vendors/riders as `phoneNumber`.
+  const phoneField = Model.schema.path('phoneNumber') ? 'phoneNumber' : 'phone';
+
+  // POST /number — { phone } set or change the number to verify.
+  // Changing it clears any previous verification.
+  router.post('/number', async (req, res) => {
+    try {
+      if (req.user.role !== role) return res.status(403).json({ message: 'Forbidden' });
+      const raw = String(req.body.phone || '').replace(/[\s\-()]/g, '');
+      // Nigerian mobile: 0803…, 234803…, +234803…
+      if (!/^(\+?234|0)[789][01]\d{8}$/.test(raw)) {
+        return res.status(400).json({ message: 'Enter a valid Nigerian mobile number, e.g. 08031234567.' });
+      }
+      const account = await Model.findById(req.user.id);
+      if (!account) return res.status(404).json({ message: 'Account not found' });
+
+      if (account[phoneField] !== raw) {
+        account[phoneField] = raw;
+        account.phoneVerified = false;
+        account.phoneVerificationCode = null;
+        account.phoneVerificationSentAt = null;
+      }
+      await account.save();
+      res.json({ phone: raw, phoneVerified: account.phoneVerified });
+    } catch (err) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   // POST /send — send (or resend) phone verification code
   router.post('/send', async (req, res) => {
     try {
