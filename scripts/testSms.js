@@ -10,7 +10,7 @@
  */
 require('dotenv').config();
 const axios = require('axios');
-const { sendSms, normalizePhone } = require('../utils/smsService');
+const { sendSms, normalizePhone, smsProvider } = require('../utils/smsService');
 
 (async () => {
   const to = process.argv[2];
@@ -18,10 +18,22 @@ const { sendSms, normalizePhone } = require('../utils/smsService');
     console.log('Usage: node scripts/testSms.js <phone number>');
     process.exit(1);
   }
+  console.log('Provider :', smsProvider(), '(set SMS_PROVIDER=termii to switch)');
+  console.log('To       :', normalizePhone(to));
+  if (smsProvider() === 'termii') {
+    console.log('Sender   :', process.env.TERMII_SENDER_ID || 'N-Alert (default)');
+    console.log('Base URL :', process.env.TERMII_BASE_URL || 'https://api.ng.termii.com (default)');
+    try {
+      await sendSms(to, 'NightCrawlers test message. If you got this, SMS works.');
+      console.log('\n✅ Termii accepted the message (reply above).');
+    } catch (err) {
+      console.log('\n❌', err.message);
+    }
+    return;
+  }
   const key = process.env.SENDCHAMP_API_KEY || '';
   console.log('Key type :', !key ? 'MISSING' : /test/i.test(key) ? 'TEST key (will not deliver)' : 'live key');
   console.log('Sender   :', process.env.SENDCHAMP_SENDER_NAME || 'Sendchamp (default)');
-  console.log('To       :', normalizePhone(to));
 
   try {
     const { data } = await axios.get('https://api.sendchamp.com/api/v1/wallet/wallet_balance', {

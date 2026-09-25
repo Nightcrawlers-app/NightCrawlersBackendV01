@@ -3,6 +3,7 @@ const router = express.Router();
 const Order = require('../models/orderModel');
 const Store = require('../models/storeModel');
 const { priceOrder, PricingError } = require('../utils/orderPricing');
+const { phoneVerificationRequired } = require('../utils/settings');
 const { protect, requireRole, optionalAuth } = require('../middlewares/auth');
 const { geocodeAddress, readLatLng, toPoint } = require('../utils/geocoder');
 
@@ -15,8 +16,13 @@ router.post('/quote', async (req, res) => {
     const store = await Store.findById(storeId);
     if (!store) return res.status(404).json({ message: 'Store not found' });
 
-    const priced = await priceOrder({ store, items, promotionId, strictPromo: false });
-    delete priced.promo;
+    // Where it's going decides the delivery fee: map pin if sent, else the address.
+    const deliveryPoint =
+      readLatLng({ lat: req.body.customerLatitude, lng: req.body.customerLongitude }) ||
+      (req.body.customerAddress ? await geocodeAddress(req.body.customerAddress) : null);
+
+    const priced = await priceOrder({ store, items, promotionId, deliveryPoint, strictPromo: false });
+    for (const k of ['promo', 'vendorEarning', 'riderEarning', 'platformEarning']) delete priced[k];
     res.json(priced);
   } catch (err) {
     if (err instanceof PricingError) return res.status(400).json({ message: err.message, ...err.extra });
@@ -28,7 +34,7 @@ router.post('/quote', async (req, res) => {
 router.post('/', optionalAuth, async (req, res) => {
   try {
     // ── Phone verification gate (logged-in customers only) ──────────────
-    if (req.user?.role === 'customer') {
+    if (req.user?.role === 'customer' && phoneVerificationRequired()) {
       const User = require('../models/userModel');
       const user = await User.findById(req.user.id);
       if (user && !user.phoneVerified) {
@@ -58,18 +64,32 @@ router.post('/', optionalAuth, async (req, res) => {
     const store = await Store.findById(storeId);
     if (!store) return res.status(404).json({ message: 'Store not found' });
 
-    // All money is worked out on the server — see utils/orderPricing.js.
-    let priced;
-    try {
-      priced = await priceOrder({ store, items, promotionId: req.body.promotionId, strictPromo: true });
-    } catch (err) {
-      if (err instanceof PricingError) return res.status(400).json({ message: err.message, ...err.extra });
-      throw err;
+    const paymentMethod = req.body.paymentMethod || 'cash_on_delivery';
+    if (!['cash_on_delivery', 'card_on_delivery', 'online'].includes(paymentMethod)) {
+      return res.status(400).json({ message: 'Unknown payment method.' });
+    }
+    if (paymentMethod === 'online') {
+      if (!require('../utils/settings').onlinePaymentsEnabled()) {
+        return res.status(400).json({ message: 'Online payment is not available right now.' });
+      }
+      if (req.user?.role !== 'customer') {
+        return res.status(400).json({ message: 'Please sign in to pay online.' });
+      }
     }
 
     // Delivery point: GPS/pin from checkout if sent, else geocode the address.
     let delivery = readLatLng({ lat: req.body.customerLatitude, lng: req.body.customerLongitude });
     if (!delivery) delivery = await geocodeAddress(customerAddress);
+
+    // All money is worked out on the server — see utils/orderPricing.js.
+    let priced;
+    try {
+      priced = await priceOrder({ store, items, promotionId: req.body.promotionId, deliveryPoint: delivery, strictPromo: true });
+    } catch (err) {
+      if (err instanceof PricingError) return res.status(400).json({ message: err.message, ...err.extra });
+      throw err;
+    }
+
     const pickup = store.coordinates?.coordinates?.length === 2 ? store.coordinates : undefined;
 
     const order = await Order.create({
@@ -84,8 +104,14 @@ router.post('/', optionalAuth, async (req, res) => {
       items: priced.items,
       totalAmount: priced.subtotal, // food subtotal (kept as totalAmount for existing reports)
       deliveryFee: priced.deliveryFee,
+      deliveryDistanceKm: priced.distanceKm,
       serviceFee: priced.serviceFee,
       totalPaid: priced.total,      // what the customer pays
+      vendorEarning: priced.vendorEarning,
+      riderEarning: priced.riderEarning,
+      platformEarning: priced.platformEarning,
+      paymentMethod,
+      paymentStatus: paymentMethod === 'online' ? 'pending' : 'not_required',
       status: 'pending',
       ...(pickup && { pickupCoordinates: pickup }),
       ...(priced.promo && {
@@ -220,6 +246,9 @@ router.patch('/:id/status', protect, async (req, res) => {
 
     if (role === 'vendor') {
       if (String(order.vendorId) !== String(id)) return res.status(403).json({ message: 'Forbidden' });
+      if (order.paymentMethod === 'online' && order.paymentStatus !== 'paid' && status !== 'cancelled') {
+        return res.status(400).json({ message: 'This order is waiting for the customer to pay online.' });
+      }
       const allowed = vendorTransitions[order.status] || [];
       if (!allowed.includes(status)) {
         return res.status(400).json({ message: `Cannot transition from ${order.status} to ${status}` });
@@ -264,7 +293,11 @@ router.get('/vendor/:vendorId', protect, async (req, res) => {
     if (req.user.role !== 'admin' && String(req.user.id) !== req.params.vendorId) {
       return res.status(403).json({ message: 'Forbidden' });
     }
-    const orders = await Order.find({ vendorId: req.params.vendorId }).sort({ createdAt: -1 });
+    // Online orders only appear once they're paid — nothing to cook before then.
+    const orders = await Order.find({
+      vendorId: req.params.vendorId,
+      $or: [{ paymentMethod: { $ne: 'online' } }, { paymentStatus: 'paid' }],
+    }).sort({ createdAt: -1 });
     res.json(orders);
   } catch (err) {
     res.status(500).json({ message: err.message });

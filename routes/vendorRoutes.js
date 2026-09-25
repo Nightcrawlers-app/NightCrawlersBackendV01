@@ -1,4 +1,12 @@
 const express = require('express');
+const { rateLimit, byIp, byIpAndEmail, byUser, MIN } = require('../utils/rateLimit');
+
+// ── Rate limits: stop password guessing and SMS/email spam ──────────────────
+const loginLimit = rateLimit({ name: 'login', max: 10, windowMs: 15 * MIN, key: byIpAndEmail });
+const loginIpLimit = rateLimit({ name: 'login-ip', max: 50, windowMs: 15 * MIN, key: byIp });
+const signupLimit = rateLimit({ name: 'signup', max: 10, windowMs: 60 * MIN, key: byIp });
+const sendCodeLimit = rateLimit({ name: 'send-code', max: 5, windowMs: 60 * MIN, key: byIpAndEmail });
+const checkCodeLimit = rateLimit({ name: 'check-code', max: 15, windowMs: 15 * MIN, key: byIpAndEmail });
 const router = express.Router();
 const Vendor = require('../models/vendorModel');
 const { BUSINESS_TYPES } = require('../models/vendorModel');
@@ -11,7 +19,7 @@ const { sendVendorWelcomeEmail } = require('../utils/mailer');
 router.get('/business-types', (req, res) => res.json(BUSINESS_TYPES));
 
 // POST /api/vendors — create vendor account
-router.post('/', async (req, res) => {
+router.post('/', signupLimit, async (req, res) => {
   try {
     const { firstName, lastName, businessType, phoneNumber, email, location, password } = req.body;
 
@@ -61,7 +69,7 @@ router.post('/', async (req, res) => {
 });
 
 // POST /api/vendors/login
-router.post('/login', async (req, res) => {
+router.post('/login', loginIpLimit, loginLimit, async (req, res) => {
   try {
     const { email, password } = req.body;
     const vendor = await Vendor.findOne({ email: (email || '').toLowerCase() });
@@ -97,6 +105,22 @@ router.get('/:vendorId/stores', protect, async (req, res) => {
     const Store = require('../models/storeModel');
     const stores = await Store.find({ vendorId: req.params.vendorId }).sort({ createdAt: -1 });
     res.json(stores);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// POST /api/{vendors|riders}/me/reapply — a rejected applicant goes back into
+// the admin's approval queue (after fixing whatever the reason said).
+router.post('/me/reapply', protect, requireRole('vendor'), async (req, res) => {
+  try {
+    const account = await Vendor.findById(req.user.id);
+    if (!account) return res.status(404).json({ message: 'Account not found' });
+    if (!account.rejectedAt) return res.status(400).json({ message: 'Your application is not rejected.' });
+    account.rejectedAt = null;
+    account.rejectionReason = null;
+    await account.save();
+    res.json(account.toSafeJSON());
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

@@ -73,6 +73,10 @@ const VendorSchema = new mongoose.Schema(
       coordinates: { type: [Number], default: undefined },
     },
     verified: { type: Boolean, default: false },
+    // Rejected applications are kept (not deleted) so there's a record and
+    // the applicant can see why and reapply.
+    rejectedAt: { type: Date, default: null },
+    rejectionReason: { type: String, default: null, maxlength: 500 },
   },
   { timestamps: true }
 );

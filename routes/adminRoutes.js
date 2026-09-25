@@ -17,23 +17,8 @@ router.use(protect, requireRole('admin'));
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
-const startOfToday = () => {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d;
-};
-const startOfMonth = () => {
-  const d = new Date();
-  d.setDate(1);
-  d.setHours(0, 0, 0, 0);
-  return d;
-};
-const startOfYear = () => {
-  const d = new Date();
-  d.setMonth(0, 1);
-  d.setHours(0, 0, 0, 0);
-  return d;
-};
+// Day/month/year start in Nigerian time (not the server's zone) — see utils/time.js
+const { startOfToday, startOfMonth, startOfYear } = require('../utils/time');
 
 // ─── GET /api/admin/stats ──────────────────────────────────────────────────────
 router.get('/stats', async (req, res) => {
@@ -117,8 +102,9 @@ router.get('/activity', async (req, res) => {
 router.get('/pending', async (req, res) => {
   try {
     const [pendingVendors, pendingRiders] = await Promise.all([
-      Vendor.find({ verified: false }),
-      Rider.find({ verified: false }),
+      // Rejected applications leave the queue until they reapply
+      Vendor.find({ verified: false, rejectedAt: null }),
+      Rider.find({ verified: false, rejectedAt: null }),
     ]);
 
     const pending = [
@@ -153,21 +139,11 @@ router.post('/verify', async (req, res) => {
     const Model = type === 'vendor' ? Vendor : Rider;
     const entity = await Model.findById(id);
 
-    console.log("VERIFY REQUEST:", req.body);
-    
-    console.log("ENTITY:", {
-      id: entity?._id,
-      phoneVerified: entity?.phoneVerified,
-      verified: entity?.verified,
-      email: entity?.email,
-    });
-
     if (!entity) return res.status(404).json({ message: `${type} not found.` });
 
     if (action === 'approve') {
       // ── Require phone verification before approval ──────────────────
-      if (!entity.phoneVerified) {
-        console.log("PHONE NOT VERIFIED.");
+      if (!entity.phoneVerified && require('../utils/settings').phoneVerificationRequired()) {
         return res.status(400).json({
           message: `Cannot approve: ${type} has not verified their phone number yet.`,
         });
@@ -179,7 +155,7 @@ router.post('/verify', async (req, res) => {
         });
       }
     
-      await Model.findByIdAndUpdate(id, { verified: true });
+      await Model.findByIdAndUpdate(id, { verified: true, rejectedAt: null, rejectionReason: null });
 
       // Fire approval email
       if (type === 'vendor') {
@@ -192,16 +168,17 @@ router.post('/verify', async (req, res) => {
         );
       }
     } else {
-      // reject: delete the account
-      await Model.findByIdAndDelete(id);
+      // reject: keep the account, mark it rejected (it used to be deleted)
+      const reason = String(req.body.reason || '').trim().slice(0, 500) || null;
+      await Model.findByIdAndUpdate(id, { verified: false, rejectedAt: new Date(), rejectionReason: reason });
 
       // Fire rejection email
       if (type === 'vendor') {
-        sendVendorRejectedEmail(entity.email, entity.firstName).catch((err) =>
+        sendVendorRejectedEmail(entity.email, entity.firstName, reason).catch((err) =>
           console.error('Vendor rejection email failed:', err.message)
         );
       } else {
-        sendRiderRejectedEmail(entity.email, entity.firstName).catch((err) =>
+        sendRiderRejectedEmail(entity.email, entity.firstName, reason).catch((err) =>
           console.error('Rider rejection email failed:', err.message)
         );
       }
@@ -296,15 +273,15 @@ router.get('/earnings', async (req, res) => {
     const [vendorToday, vendorMonth, vendorYear] = await Promise.all([
       Order.aggregate([
         { $match: { status: 'delivered', deliveredAt: { $gte: today } } },
-        { $group: { _id: '$vendorId', total: { $sum: '$totalAmount' }, count: { $sum: 1 } } },
+        { $group: { _id: '$vendorId', total: { $sum: { $ifNull: ['$vendorEarning', '$totalAmount'] } }, count: { $sum: 1 } } },
       ]),
       Order.aggregate([
         { $match: { status: 'delivered', deliveredAt: { $gte: month } } },
-        { $group: { _id: '$vendorId', total: { $sum: '$totalAmount' }, count: { $sum: 1 } } },
+        { $group: { _id: '$vendorId', total: { $sum: { $ifNull: ['$vendorEarning', '$totalAmount'] } }, count: { $sum: 1 } } },
       ]),
       Order.aggregate([
         { $match: { status: 'delivered', deliveredAt: { $gte: year } } },
-        { $group: { _id: '$vendorId', total: { $sum: '$totalAmount' }, count: { $sum: 1 } } },
+        { $group: { _id: '$vendorId', total: { $sum: { $ifNull: ['$vendorEarning', '$totalAmount'] } }, count: { $sum: 1 } } },
       ]),
     ]);
 
@@ -312,15 +289,15 @@ router.get('/earnings', async (req, res) => {
     const [riderToday, riderMonth, riderYear] = await Promise.all([
       Order.aggregate([
         { $match: { status: 'delivered', deliveredAt: { $gte: today } } },
-        { $group: { _id: '$riderId', total: { $sum: '$deliveryFee' }, count: { $sum: 1 } } },
+        { $group: { _id: '$riderId', total: { $sum: { $ifNull: ['$riderEarning', '$deliveryFee'] } }, count: { $sum: 1 } } },
       ]),
       Order.aggregate([
         { $match: { status: 'delivered', deliveredAt: { $gte: month } } },
-        { $group: { _id: '$riderId', total: { $sum: '$deliveryFee' }, count: { $sum: 1 } } },
+        { $group: { _id: '$riderId', total: { $sum: { $ifNull: ['$riderEarning', '$deliveryFee'] } }, count: { $sum: 1 } } },
       ]),
       Order.aggregate([
         { $match: { status: 'delivered', deliveredAt: { $gte: year } } },
-        { $group: { _id: '$riderId', total: { $sum: '$deliveryFee' }, count: { $sum: 1 } } },
+        { $group: { _id: '$riderId', total: { $sum: { $ifNull: ['$riderEarning', '$deliveryFee'] } }, count: { $sum: 1 } } },
       ]),
     ]);
 
@@ -388,15 +365,15 @@ router.get('/stores/earnings', async (req, res) => {
     const [storeToday, storeMonth, storeYear] = await Promise.all([
       Order.aggregate([
         { $match: { status: 'delivered', deliveredAt: { $gte: today } } },
-        { $group: { _id: '$storeId', total: { $sum: '$totalAmount' }, count: { $sum: 1 } } },
+        { $group: { _id: '$storeId', total: { $sum: { $ifNull: ['$vendorEarning', '$totalAmount'] } }, count: { $sum: 1 } } },
       ]),
       Order.aggregate([
         { $match: { status: 'delivered', deliveredAt: { $gte: month } } },
-        { $group: { _id: '$storeId', total: { $sum: '$totalAmount' }, count: { $sum: 1 } } },
+        { $group: { _id: '$storeId', total: { $sum: { $ifNull: ['$vendorEarning', '$totalAmount'] } }, count: { $sum: 1 } } },
       ]),
       Order.aggregate([
         { $match: { status: 'delivered', deliveredAt: { $gte: year } } },
-        { $group: { _id: '$storeId', total: { $sum: '$totalAmount' }, count: { $sum: 1 } } },
+        { $group: { _id: '$storeId', total: { $sum: { $ifNull: ['$vendorEarning', '$totalAmount'] } }, count: { $sum: 1 } } },
       ]),
     ]);
 

@@ -37,7 +37,52 @@ const normalizePhone = (phone) => {
  * Sends an SMS via Sendchamp.
  * Used internally — callers should prefer the specific send*Otp helpers below.
  */
-const sendSms = async (to, message) => {
+/**
+ * Which SMS company to use: SMS_PROVIDER=sendchamp (default) or termii.
+ * Switch in .env and restart — no code changes needed.
+ */
+const smsProvider = () => (process.env.SMS_PROVIDER || 'sendchamp').toLowerCase();
+
+const sendSms = async (to, message) =>
+  smsProvider() === 'termii' ? sendViaTermii(to, message) : sendViaSendchamp(to, message);
+
+/**
+ * Termii. Needs TERMII_API_KEY and TERMII_SENDER_ID. TERMII_BASE_URL is the
+ * account-specific address shown on your Termii dashboard (API settings).
+ * OTPs must use the "dnd" channel with a sender ID Termii has approved for it.
+ */
+const sendViaTermii = async (to, message) => {
+  const phone = normalizePhone(to);
+  if (!process.env.TERMII_API_KEY) {
+    throw new Error('SMS is not configured on the server (TERMII_API_KEY missing).');
+  }
+  const baseURL = (process.env.TERMII_BASE_URL || 'https://api.ng.termii.com').replace(/\/$/, '');
+  let body;
+  try {
+    const response = await axios.post(
+      `${baseURL}/api/sms/send`,
+      {
+        api_key: process.env.TERMII_API_KEY,
+        to: phone,
+        from: process.env.TERMII_SENDER_ID || 'N-Alert',
+        sms: message,
+        type: 'plain',
+        channel: process.env.TERMII_CHANNEL || 'dnd',
+      },
+      { timeout: 10000 }
+    );
+    body = response.data;
+  } catch (err) {
+    const errMsg = err.response?.data?.message || err.message;
+    console.error(`❌ SMS (termii) → ${phone} failed:`, JSON.stringify(err.response?.data || err.message));
+    throw new Error(`Termii SMS failed: ${errMsg}`);
+  }
+  console.log(`📱 SMS (termii) → ${phone}: ${JSON.stringify({ ...body, user: undefined })}`);
+  if (!body?.message_id) throw new Error(`Termii SMS failed: ${body?.message || 'no message id returned'}`);
+  return body;
+};
+
+const sendViaSendchamp = async (to, message) => {
   const phone = normalizePhone(to);
 
   if (!process.env.SENDCHAMP_API_KEY) {
@@ -96,6 +141,7 @@ const sendPhoneVerifiedConfirmation = async (phone, firstName = '') => {
 };
 
 module.exports = {
+  smsProvider,
   generateCode,
   normalizePhone,
   sendSms,

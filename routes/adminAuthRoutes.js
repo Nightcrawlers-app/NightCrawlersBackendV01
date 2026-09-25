@@ -1,11 +1,19 @@
 const express = require('express');
+const { rateLimit, byIp, byIpAndEmail, byUser, MIN } = require('../utils/rateLimit');
+
+// ── Rate limits: stop password guessing and SMS/email spam ──────────────────
+const loginLimit = rateLimit({ name: 'login', max: 10, windowMs: 15 * MIN, key: byIpAndEmail });
+const loginIpLimit = rateLimit({ name: 'login-ip', max: 50, windowMs: 15 * MIN, key: byIp });
+const signupLimit = rateLimit({ name: 'signup', max: 10, windowMs: 60 * MIN, key: byIp });
+const sendCodeLimit = rateLimit({ name: 'send-code', max: 5, windowMs: 60 * MIN, key: byIpAndEmail });
+const checkCodeLimit = rateLimit({ name: 'check-code', max: 15, windowMs: 15 * MIN, key: byIpAndEmail });
 const router = express.Router();
 const Admin = require('../models/adminModel');
 const { signToken } = require('../utils/signToken');
-const { protect, requireRole, setAuthCookie, clearAuthCookie } = require('../middlewares/auth');
+const { protect, requireRole } = require('../middlewares/auth');
 
 // POST /api/admins/login
-router.post('/login', async (req, res) => {
+router.post('/login', loginIpLimit, loginLimit, async (req, res) => {
   try {
     const { email, password } = req.body;
     const admin = await Admin.findOne({ email: (email || '').toLowerCase() });
@@ -14,20 +22,10 @@ router.post('/login', async (req, res) => {
     }
 
     const token = signToken(admin._id, 'admin');
-
-    // ── Set httpOnly cookie (secure) ──────────────────────────────────────────
-    setAuthCookie(res, token, 'admin');
-
     res.json({ token, admin: admin.toSafeJSON() });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
-});
-
-// POST /api/admins/logout  ← NEW
-router.post('/logout', (req, res) => {
-  clearAuthCookie(res, 'admin');
-  res.json({ success: true });
 });
 
 // GET /api/admins/me
@@ -41,7 +39,7 @@ router.get('/me', protect, requireRole('admin'), async (req, res) => {
   }
 });
 
-// POST /api/admins — create new admin account
+// POST /api/admins — create new admin account (should be locked down / seed-only in production)
 router.post('/', protect, requireRole('admin'), async (req, res) => {
   try {
     const { username, email, password } = req.body;

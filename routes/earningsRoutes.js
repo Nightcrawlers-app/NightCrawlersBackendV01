@@ -4,25 +4,17 @@ const Order = require('../models/orderModel');
 const Store = require('../models/storeModel');
 const { protect, requireRole } = require('../middlewares/auth');
 
-const startOfToday = () => {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d;
-};
-const startOfMonth = () => {
-  const d = new Date();
-  d.setDate(1);
-  d.setHours(0, 0, 0, 0);
-  return d;
-};
-const startOfYear = () => {
-  const d = new Date();
-  d.setMonth(0, 1);
-  d.setHours(0, 0, 0, 0);
-  return d;
+// Day/month/year start in Nigerian time (not the server's zone) — see utils/time.js
+const { startOfToday, startOfMonth, startOfYear } = require('../utils/time');
+
+// Older orders (before the split was stored) fall back to the old fields.
+const EARNING_EXPR = {
+  totalAmount: { $ifNull: ['$vendorEarning', '$totalAmount'] },
+  deliveryFee: { $ifNull: ['$riderEarning', '$deliveryFee'] },
 };
 
 const earningsAgg = async (match, revenueField) => {
+  const sumExpr = EARNING_EXPR[revenueField] || `$${revenueField}`;
   const today = startOfToday();
   const month = startOfMonth();
   const year = startOfYear();
@@ -30,15 +22,15 @@ const earningsAgg = async (match, revenueField) => {
   const [todayAgg, monthAgg, yearAgg] = await Promise.all([
     Order.aggregate([
       { $match: { ...match, status: 'delivered', deliveredAt: { $gte: today } } },
-      { $group: { _id: null, total: { $sum: `$${revenueField}` }, count: { $sum: 1 } } },
+      { $group: { _id: null, total: { $sum: sumExpr }, count: { $sum: 1 } } },
     ]),
     Order.aggregate([
       { $match: { ...match, status: 'delivered', deliveredAt: { $gte: month } } },
-      { $group: { _id: null, total: { $sum: `$${revenueField}` }, count: { $sum: 1 } } },
+      { $group: { _id: null, total: { $sum: sumExpr }, count: { $sum: 1 } } },
     ]),
     Order.aggregate([
       { $match: { ...match, status: 'delivered', deliveredAt: { $gte: year } } },
-      { $group: { _id: null, total: { $sum: `$${revenueField}` }, count: { $sum: 1 } } },
+      { $group: { _id: null, total: { $sum: sumExpr }, count: { $sum: 1 } } },
     ]),
   ]);
 

@@ -1,6 +1,8 @@
 const mongoose = require('mongoose');
 const MenuItem = require('../models/menuItemModel');
 const Promotion = require('../models/promotionModel');
+const { deliveryFeeFor } = require('./deliveryFee');
+const { fromPoint } = require('./geocoder');
 
 /**
  * The ONE place an order's money is worked out. Used both to show the
@@ -9,11 +11,13 @@ const Promotion = require('../models/promotionModel');
  * items, how many, and which promo.
  *
  *   subtotal    = Σ menu price × quantity          (prices from the database)
- *   deliveryFee = DELIVERY_FEE (flat, default ₦800)
+ *   deliveryFee = by distance store → customer (utils/deliveryFee.js);
+ *                 flat DELIVERY_FEE if either location is unknown
  *   serviceFee  = SERVICE_FEE_PERCENT of subtotal  (default 5%, rounded)
  *   discount    = promo, if eligible
  *   total       = subtotal + deliveryFee + serviceFee − discount
  */
+// Flat fee used only when the distance can't be worked out (see deliveryFee.js).
 const DELIVERY_FEE = () => Number(process.env.DELIVERY_FEE ?? 800);
 const SERVICE_FEE_PERCENT = () => Number(process.env.SERVICE_FEE_PERCENT ?? 5);
 const MAX_QUANTITY = 50;
@@ -31,10 +35,11 @@ class PricingError extends Error {
  * @param {object} args.store        Store document
  * @param {Array}  args.items        [{ menuItemId | id, quantity }]
  * @param {string} [args.promotionId]
+ * @param {{latitude:number, longitude:number}|null} [args.deliveryPoint] where it's going
  * @param {boolean} [args.strictPromo] true when placing the order: an invalid
  *        promo is an error. false for quotes: it's reported, not thrown.
  */
-const priceOrder = async ({ store, items, promotionId, strictPromo = true }) => {
+const priceOrder = async ({ store, items, promotionId, deliveryPoint = null, strictPromo = true }) => {
   if (!Array.isArray(items) || !items.length) throw new PricingError('Your cart is empty.');
 
   const lines = items.map((raw) => ({
@@ -66,7 +71,15 @@ const priceOrder = async ({ store, items, promotionId, strictPromo = true }) => 
   });
 
   const subtotal = orderItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
-  const deliveryFee = DELIVERY_FEE();
+  const storePoint = store.coordinates?.coordinates?.length === 2 ? fromPoint(store.coordinates) : null;
+  const delivery = deliveryFeeFor(storePoint, deliveryPoint);
+  if (delivery.tooFar) {
+    throw new PricingError(
+      `${store.name} is about ${Math.round(delivery.distanceKm)} km away — we deliver up to ${delivery.maxKm} km. Try a store closer to you.`,
+      { tooFar: true, distanceKm: delivery.distanceKm }
+    );
+  }
+  const deliveryFee = delivery.fee;
   const serviceFee = Math.round((subtotal * SERVICE_FEE_PERCENT()) / 100);
 
   let promo = null;
@@ -85,10 +98,23 @@ const priceOrder = async ({ store, items, promotionId, strictPromo = true }) => 
     if (!result.eligible) promo = null;
   }
 
+  // ── Who gets what ─────────────────────────────────────────────────────────
+  // Vendor: the food subtotal, minus the discount only if the VENDOR funds it.
+  // Rider:  the delivery fee, always (free delivery is paid by whoever funds the promo).
+  // Platform: the service fee, minus the discount if the PLATFORM funds it.
+  const vendorFunded = promo?.fundedBy === 'vendor';
+  const vendorEarning = subtotal - (vendorFunded ? discount : 0);
+  const riderEarning = deliveryFee;
+  const platformEarning = serviceFee - (vendorFunded ? 0 : discount);
+
   return {
+    vendorEarning,
+    riderEarning,
+    platformEarning,
     items: orderItems,
     subtotal,
     deliveryFee,
+    distanceKm: delivery.distanceKm, // null when the fee is the flat fallback
     serviceFee,
     serviceFeePercent: SERVICE_FEE_PERCENT(),
     discount,

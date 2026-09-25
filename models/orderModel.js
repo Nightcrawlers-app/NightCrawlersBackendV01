@@ -49,14 +49,33 @@ const OrderSchema = new mongoose.Schema(
     totalAmount: { type: Number, required: true },
     deliveryFee: { type: Number, required: true },
     serviceFee: { type: Number, default: 0 },
+    // Road-distance estimate used to price delivery (null = flat fallback fee)
+    deliveryDistanceKm: { type: Number, default: null },
     // Everything the customer pays: food + delivery + service − discount.
     // (totalAmount above is the food subtotal only.)
     totalPaid: { type: Number, default: null },
+    // Settlement split, fixed at order time (see utils/orderPricing.js).
+    // vendorEarning + riderEarning + platformEarning === totalPaid.
+    vendorEarning: { type: Number, default: null },
+    riderEarning: { type: Number, default: null },
+    platformEarning: { type: Number, default: null },
     // Promotion applied at checkout (recalculated on the server, never trusted from the browser)
     promotionId: { type: mongoose.Schema.Types.ObjectId, ref: 'Promotion', default: null },
     promotionTitle: { type: String, default: null },
     discountAmount: { type: Number, default: 0 },
     discountFundedBy: { type: String, enum: ['platform', 'vendor', null], default: null },
+
+    // ── Payment ────────────────────────────────────────────────────────────
+    //   cash_on_delivery / card_on_delivery → paid to the rider; nothing online
+    //   online → Paystack checkout; the vendor can't start until it's 'paid'
+    paymentMethod: {
+      type: String,
+      enum: ['cash_on_delivery', 'card_on_delivery', 'online'],
+      default: 'cash_on_delivery',
+    },
+    paymentStatus: { type: String, enum: ['not_required', 'pending', 'paid', 'failed'], default: 'not_required' },
+    paystackReference: { type: String, default: null, index: true },
+    paidAt: { type: Date, default: null },
     status: { type: String, enum: ORDER_STATUSES, default: 'pending', index: true },
     acceptedAt: { type: Date, default: null },
     pickedUpAt: { type: Date, default: null },

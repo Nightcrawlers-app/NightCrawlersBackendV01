@@ -24,6 +24,7 @@ const adminKycRoutes = require('./routes/adminKycRoutes');
 const geoRoutes = require('./routes/geoRoutes');
 const contactRoutes = require('./routes/contactRoutes');
 const promotionRoutes = require('./routes/promotionRoutes');
+const { router: paymentRoutes } = require('./routes/paymentRoutes');
 const swaggerUi = require("swagger-ui-express");
 const swaggerFile = require("./swagger-output.json");
 
@@ -32,8 +33,44 @@ const app = express();
 // Behind nginx: lets req.ip / req.protocol reflect the real client.
 app.set('trust proxy', 1);
 
-app.use(cors());
-app.use(express.json({ limit: '10mb' })); // 10mb to allow base64 image uploads
+// ─── CORS: only our own frontends may call the API from a browser ───────────
+// FRONTEND_URL (and optional CORS_ORIGINS) are comma-separated lists, e.g.
+//   FRONTEND_URL=https://nightcrawlers.app,https://night-crawlers.vercel.app
+// Requests with no Origin header (curl, Paystack webhooks, mobile apps) are
+// not affected — CORS only restricts browsers.
+const allowedOrigins = new Set(
+  [process.env.FRONTEND_URL, process.env.CORS_ORIGINS]
+    .filter(Boolean)
+    .flatMap((v) => v.split(','))
+    .map((v) => v.trim().replace(/\/$/, ''))
+    .filter(Boolean)
+);
+if (process.env.NODE_ENV !== 'production') {
+  ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:4173'].forEach((o) => allowedOrigins.add(o));
+}
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.has(origin)) return callback(null, true);
+      // Vercel preview deployments, if enabled: https://night-crawlers-git-branch-you.vercel.app
+      if (process.env.CORS_ALLOW_VERCEL_PREVIEWS === 'true' && /^https:\/\/night-crawlers[a-z0-9-]*\.vercel\.app$/.test(origin)) {
+        return callback(null, true);
+      }
+      return callback(null, false); // browser blocks it; no error noise in logs
+    },
+  })
+);
+
+// 10mb to allow base64 image uploads. `rawBody` is kept for verifying the
+// signature on Paystack webhooks, which must be checked against exact bytes.
+app.use(
+  express.json({
+    limit: '10mb',
+    verify: (req, res, buf) => {
+      if (req.originalUrl.startsWith('/api/payments/paystack/webhook')) req.rawBody = buf;
+    },
+  })
+);
 
 connectDB();
 
@@ -64,6 +101,9 @@ app.use('/api/admin', adminKycRoutes);       // GET/POST /api/admin/kyc/...
 // ─── Geocoding (address search / reverse lookup) ────────────────────────────
 app.use('/api/geo', geoRoutes);           // GET /api/geo/search, /api/geo/reverse
 
+// ─── Payments (Paystack) ────────────────────────────────────────────────────
+app.use('/api/payments', paymentRoutes);
+
 // ─── Promotions ─────────────────────────────────────────────────────────────
 app.use('/api/promotions', promotionRoutes.publicRouter);        // live promos, quotes
 app.use('/api/admin/promotions', promotionRoutes.adminRouter);   // admin CRUD
@@ -85,6 +125,9 @@ app.use('/api', earningsRoutes);
 app.use('/api/admin', adminRoutes);
 
 app.get('/', (req, res) => res.json({ status: 'ok', message: 'Night Crawlers API' }));
+
+// GET /api/config — public settings the frontend needs (fees, feature switches)
+app.get('/api/config', (req, res) => res.json(require('./utils/settings').publicConfig()));
 
 app.get("/health", (req, res) => {
   res.json({ status: 'ok', message: 'API is healthy' });

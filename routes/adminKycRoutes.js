@@ -146,7 +146,7 @@ router.post('/kyc/vendor/:id/agent', async (req, res) => {
         : 'Agent visit marked as failed.',
     });
   } catch (err) {
-    console.log('AGENT ROUTE ERROR:', err.message); // comment out later
+    console.error('Agent route error:', err.message);
     res.status(500).json({ message: err.message });
   }
 });

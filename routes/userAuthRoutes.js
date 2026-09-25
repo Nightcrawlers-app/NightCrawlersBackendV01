@@ -1,4 +1,12 @@
 const express = require('express');
+const { rateLimit, byIp, byIpAndEmail, byUser, MIN } = require('../utils/rateLimit');
+
+// ── Rate limits: stop password guessing and SMS/email spam ──────────────────
+const loginLimit = rateLimit({ name: 'login', max: 10, windowMs: 15 * MIN, key: byIpAndEmail });
+const loginIpLimit = rateLimit({ name: 'login-ip', max: 50, windowMs: 15 * MIN, key: byIp });
+const signupLimit = rateLimit({ name: 'signup', max: 10, windowMs: 60 * MIN, key: byIp });
+const sendCodeLimit = rateLimit({ name: 'send-code', max: 5, windowMs: 60 * MIN, key: byIpAndEmail });
+const checkCodeLimit = rateLimit({ name: 'check-code', max: 15, windowMs: 15 * MIN, key: byIpAndEmail });
 const router = express.Router();
 const User = require('../models/userModel');
 const { signToken } = require('../utils/signToken');
@@ -20,7 +28,7 @@ const getIp = (req) =>
 
 // POST /api/auth/signup
 // Creates account (unverified) and sends a 6-digit code to the email.
-router.post('/signup', async (req, res) => {
+router.post('/signup', signupLimit, async (req, res) => {
   try {
     const { username, email, password } = req.body;
     if (!email || !password) {
@@ -85,7 +93,7 @@ router.post('/signup', async (req, res) => {
 
 // POST /api/auth/verify
 // Verifies the 6-digit code. On success, sends welcome email and returns JWT.
-router.post('/verify', async (req, res) => {
+router.post('/verify', checkCodeLimit, async (req, res) => {
   try {
     const { email, code } = req.body;
     if (!email || !code) {
@@ -147,7 +155,7 @@ router.post('/verify', async (req, res) => {
 
 // POST /api/auth/resend-code
 // Resends a fresh verification code.
-router.post('/resend-code', async (req, res) => {
+router.post('/resend-code', sendCodeLimit, async (req, res) => {
   try {
     const { email } = req.body;
     if (!email) return res.status(400).json({ message: 'Email is required.' });
@@ -174,7 +182,7 @@ router.post('/resend-code', async (req, res) => {
 });
 
 // POST /api/auth/login
-router.post('/login', async (req, res) => {
+router.post('/login', loginIpLimit, loginLimit, async (req, res) => {
   try {
     const { email, password } = req.body;
     const user = await User.findOne({ email: (email || '').toLowerCase() });
@@ -229,7 +237,7 @@ router.post('/login', async (req, res) => {
 
 // ─── VERIFY LOGIN (new location) ─────────────────────────────────────────────
  
-router.post('/verify-login', async (req, res) => {
+router.post('/verify-login', checkCodeLimit, async (req, res) => {
   try {
     const { email, code } = req.body;
     if (!email || !code) {
@@ -265,28 +273,10 @@ router.post('/verify-login', async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 });
-
-// POST /api/contact — contact form submission
-router.post('/contact', async (req, res) => {
-  try {
-    const { firstName, lastName, email, message } = req.body;
-
-    if (!email || !message) {
-      return res.status(400).json({ message: 'Email and message are required.' });
-    }
-
-    const { sendContactEmail } = require('../utils/mailer');
-    await sendContactEmail({ firstName, lastName, email, message });
-
-    res.json({ message: 'Message received. We\'ll be in touch shortly.' });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
-});
  
 // ─── FORGOT PASSWORD ─────────────────────────────────────────────────────────
  
-router.post('/forgot-password', async (req, res) => {
+router.post('/forgot-password', sendCodeLimit, async (req, res) => {
   try {
     const { email } = req.body;
     if (!email) return res.status(400).json({ message: 'Email is required.' });
@@ -318,14 +308,14 @@ router.post('/forgot-password', async (req, res) => {
  
 // ─── RESET PASSWORD ──────────────────────────────────────────────────────────
  
-router.post('/reset-password', async (req, res) => {
+router.post('/reset-password', checkCodeLimit, async (req, res) => {
   try {
     const { email, code, newPassword } = req.body;
     if (!email || !code || !newPassword) {
       return res.status(400).json({ message: 'Email, code and new password are required.' });
     }
-    if (newPassword.length < 6) {
-      return res.status(400).json({ message: 'Password must be at least 6 characters.' });
+    if (newPassword.length < 8) {
+      return res.status(400).json({ message: 'Password must be at least 8 characters.' });
     }
  
     const user = await User.findOne({ email: email.toLowerCase() });

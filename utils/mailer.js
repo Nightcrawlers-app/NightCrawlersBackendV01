@@ -256,7 +256,7 @@ const sendVendorApprovedEmail = async (to, firstName) => {
   });
 };
 
-const sendVendorRejectedEmail = async (to, firstName) => {
+const sendVendorRejectedEmail = async (to, firstName, reason = '') => {
   await sendMail({
     from: `"Night Crawlers" <${process.env.SMTP_FROM}>`,
     to,
@@ -265,7 +265,10 @@ const sendVendorRejectedEmail = async (to, firstName) => {
       <p style="color:#222;font-size:16px;margin:0 0 8px">Hi ${firstName},</p>
       <p style="color:#667085;font-size:15px;margin:0 0 24px">
         Hello there! Unfortunately, we were unable to approve your partner application at this time.
-        Please contact us if you have questions or would like to reapply.
+      </p>
+      ${reason ? `<div style="background:#f9fafb;border:1px solid #eaecf0;border-radius:8px;padding:16px;margin:0 0 24px;color:#344054;font-size:15px"><strong>Reason:</strong> ${escapeHtml(reason)}</div>` : ''}
+      <p style="color:#667085;font-size:15px;margin:0 0 24px">
+        You can fix anything that's needed and reapply from your dashboard, or contact us with questions.
       </p>
       <p style="color:#667085;font-size:13px;margin:0">
         Email us at <a href="mailto:${process.env.SMTP_FROM}" style="color:#C62222">${process.env.SMTP_FROM}</a>.
@@ -316,7 +319,7 @@ const sendRiderApprovedEmail = async (to, firstName) => {
   });
 };
 
-const sendRiderRejectedEmail = async (to, firstName) => {
+const sendRiderRejectedEmail = async (to, firstName, reason = '') => {
   await sendMail({
     from: `"Night Crawlers" <${process.env.SMTP_FROM}>`,
     to,
@@ -325,7 +328,10 @@ const sendRiderRejectedEmail = async (to, firstName) => {
       <p style="color:#222;font-size:16px;margin:0 0 8px">Hi ${firstName},</p>
       <p style="color:#667085;font-size:15px;margin:0 0 24px">
         Hello there! Unfortunately, we were unable to approve your rider application at this time.
-        Please contact us if you have questions or would like to reapply.
+      </p>
+      ${reason ? `<div style="background:#f9fafb;border:1px solid #eaecf0;border-radius:8px;padding:16px;margin:0 0 24px;color:#344054;font-size:15px"><strong>Reason:</strong> ${escapeHtml(reason)}</div>` : ''}
+      <p style="color:#667085;font-size:15px;margin:0 0 24px">
+        You can fix anything that's needed and reapply from your dashboard, or contact us with questions.
       </p>
       <p style="color:#667085;font-size:13px;margin:0">
         Email us at <a href="mailto:${process.env.SMTP_FROM}" style="color:#C62222">${process.env.SMTP_FROM}</a>.

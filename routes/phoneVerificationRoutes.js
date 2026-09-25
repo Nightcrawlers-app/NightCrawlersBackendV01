@@ -1,4 +1,5 @@
 const express = require('express');
+const { rateLimit, byIp, byIpAndEmail, byUser, MIN } = require('../utils/rateLimit');
 const { protect } = require('../middlewares/auth');
 const {
   generateCode,
@@ -32,7 +33,7 @@ const createPhoneVerificationRoutes = (Model, role) => {
 
   // POST /number — { phone } set or change the number to verify.
   // Changing it clears any previous verification.
-  router.post('/number', async (req, res) => {
+  router.post('/number', rateLimit({ name: `phone-number-${role}`, max: 10, windowMs: 60 * MIN, key: byUser }), async (req, res) => {
     try {
       if (req.user.role !== role) return res.status(403).json({ message: 'Forbidden' });
       const raw = String(req.body.phone || '').replace(/[\s\-()]/g, '');
@@ -57,7 +58,8 @@ const createPhoneVerificationRoutes = (Model, role) => {
   });
 
   // POST /send — send (or resend) phone verification code
-  router.post('/send', async (req, res) => {
+  // SMS costs money — at most 5 per hour per account.
+  router.post('/send', rateLimit({ name: `phone-send-${role}`, max: 5, windowMs: 60 * MIN, key: byUser }), async (req, res) => {
     try {
       if (req.user.role !== role) {
         return res.status(403).json({ message: 'Forbidden' });
@@ -97,7 +99,7 @@ const createPhoneVerificationRoutes = (Model, role) => {
   });
 
   // POST /verify — verify the submitted code
-  router.post('/verify', async (req, res) => {
+  router.post('/verify', rateLimit({ name: `phone-verify-${role}`, max: 15, windowMs: 15 * MIN, key: byUser }), async (req, res) => {
     try {
       if (req.user.role !== role) {
         return res.status(403).json({ message: 'Forbidden' });

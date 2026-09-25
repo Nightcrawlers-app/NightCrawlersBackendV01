@@ -1,4 +1,12 @@
 const express = require('express');
+const { rateLimit, byIp, byIpAndEmail, byUser, MIN } = require('../utils/rateLimit');
+
+// ── Rate limits: stop password guessing and SMS/email spam ──────────────────
+const loginLimit = rateLimit({ name: 'login', max: 10, windowMs: 15 * MIN, key: byIpAndEmail });
+const loginIpLimit = rateLimit({ name: 'login-ip', max: 50, windowMs: 15 * MIN, key: byIp });
+const signupLimit = rateLimit({ name: 'signup', max: 10, windowMs: 60 * MIN, key: byIp });
+const sendCodeLimit = rateLimit({ name: 'send-code', max: 5, windowMs: 60 * MIN, key: byIpAndEmail });
+const checkCodeLimit = rateLimit({ name: 'check-code', max: 15, windowMs: 15 * MIN, key: byIpAndEmail });
 const { readLatLng, toPoint, geocodeAddress } = require('../utils/geocoder');
 const router = express.Router();
 const Rider = require('../models/riderModel');
@@ -7,7 +15,7 @@ const { protect, requireRole } = require('../middlewares/auth');
 const { sendRiderWelcomeEmail } = require('../utils/mailer'); // ✅ ADDED
 
 // POST /api/riders — create rider account
-router.post('/', async (req, res) => {
+router.post('/', signupLimit, async (req, res) => {
   try {
     const { firstName, lastName, vehicleType, phoneNumber, email, location, password } = req.body;
 
@@ -48,7 +56,7 @@ router.post('/', async (req, res) => {
 });
 
 // POST /api/riders/login
-router.post('/login', async (req, res) => {
+router.post('/login', loginIpLimit, loginLimit, async (req, res) => {
   try {
     const { email, password } = req.body;
     const rider = await Rider.findOne({ email: (email || '').toLowerCase() });
@@ -128,6 +136,22 @@ router.get('/:id', protect, async (req, res) => {
     const rider = await Rider.findById(req.params.id);
     if (!rider) return res.status(404).json({ message: 'Rider not found' });
     res.json(rider.toSafeJSON());
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// POST /api/{vendors|riders}/me/reapply — a rejected applicant goes back into
+// the admin's approval queue (after fixing whatever the reason said).
+router.post('/me/reapply', protect, requireRole('rider'), async (req, res) => {
+  try {
+    const account = await Rider.findById(req.user.id);
+    if (!account) return res.status(404).json({ message: 'Account not found' });
+    if (!account.rejectedAt) return res.status(400).json({ message: 'Your application is not rejected.' });
+    account.rejectedAt = null;
+    account.rejectionReason = null;
+    await account.save();
+    res.json(account.toSafeJSON());
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

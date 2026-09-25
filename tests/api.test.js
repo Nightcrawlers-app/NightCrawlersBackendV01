@@ -61,6 +61,16 @@ jest.mock('../utils/paystackService', () => ({
 }));
 
 
+// Paystack checkout calls are faked; signature checking stays real.
+jest.mock('../utils/paystackPayments', () => ({
+  ...jest.requireActual('../utils/paystackPayments'),
+  initializeTransaction: jest.fn(async ({ reference }) => ({
+    authorizationUrl: `https://checkout.paystack.com/test/${reference}`,
+    reference,
+  })),
+  verifyTransaction: jest.fn(),
+}));
+
 jest.mock('../utils/premblyService', () => ({
   verifyNIN: jest.fn().mockResolvedValue({
     verified: true,
@@ -109,6 +119,27 @@ beforeAll(async () => {
   process.env.JWT_SECRET = 'test_secret';
   process.env.FRONTEND_URL = 'http://localhost:5173';
   process.env.SMTP_FROM = 'test@nightcrawlers.com';
+
+  // Pin every business setting to a known value. The app loads your .env
+  // (via dotenv) when it starts, but dotenv never overwrites a variable that's
+  // already set — so setting them here keeps tests independent of whatever
+  // you've chosen locally (e.g. REQUIRE_PHONE_VERIFICATION=false or your own
+  // delivery prices). Tests that need a different value set it themselves.
+  Object.assign(process.env, {
+    REQUIRE_PHONE_VERIFICATION: 'true',
+    SMS_PROVIDER: 'sendchamp',
+    PAYSTACK_API_KEY: '',
+    SERVICE_FEE_PERCENT: '5',
+    DELIVERY_FEE: '800',
+    DELIVERY_BASE_FEE: '500',
+    DELIVERY_PER_KM: '150',
+    DELIVERY_INCLUDED_KM: '2',
+    DELIVERY_MIN_FEE: '500',
+    DELIVERY_MAX_FEE: '3000',
+    DELIVERY_MAX_KM: '20',
+    DELIVERY_ROAD_FACTOR: '1.3',
+    APP_UTC_OFFSET_MINUTES: '60',
+  });
 
   // Import app after env is set
   app = require('../app');
@@ -939,6 +970,20 @@ describe('Admin', () => {
 
     expect(res.status).toBe(200);
     expect(mailer.sendRiderRejectedEmail).toHaveBeenCalled();
+
+    // Kept, not deleted — marked rejected and out of the approval queue
+    const Rider = require('../models/riderModel');
+    const rider = await Rider.findById(riderId);
+    expect(rider).not.toBeNull();
+    expect(rider.rejectedAt).toBeInstanceOf(Date);
+    const pending = await request(app).get('/api/admin/pending').set('Authorization', `Bearer ${token}`);
+    expect(pending.body.find((p) => p.id === riderId)).toBeUndefined();
+
+    // They can reapply, which puts them back in the queue
+    const again = await request(app).post('/api/riders/me/reapply').set('Authorization', `Bearer ${reg.body.token}`);
+    expect(again.status).toBe(200);
+    const pending2 = await request(app).get('/api/admin/pending').set('Authorization', `Bearer ${token}`);
+    expect(pending2.body.find((p) => p.id === riderId)).toBeDefined();
   });
 });
 
@@ -1624,5 +1669,231 @@ describe('Promotions', () => {
       .send({ storeId, subtotal: 6000, deliveryFee: 800 });
     expect(quote.body.eligible).toBe(false);
     expect(quote.body.amountNeeded).toBe(4000);
+  });
+});
+
+// ── Launch items: settings, rate limits, earnings split, online payments ─────
+
+describe('Launch settings', () => {
+  afterEach(() => {
+    process.env.REQUIRE_PHONE_VERIFICATION = 'true';
+  });
+
+  it('GET /api/config exposes public settings only', async () => {
+    const res = await request(app).get('/api/config');
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ requirePhoneVerification: true, serviceFeePercent: 5 });
+    expect(res.body.delivery).toMatchObject({ baseFee: 500, perKm: 150, includedKm: 2, maxKm: 20 });
+    expect(JSON.stringify(res.body)).not.toMatch(/sk_/);
+  });
+
+  it('REQUIRE_PHONE_VERIFICATION=false lets a customer with no verified phone order', async () => {
+    const vendor = await registerVendor({ email: 'switch-vendor@test.com' });
+    const store = await request(app)
+      .post('/api/stores')
+      .set('Authorization', `Bearer ${vendor.body.token}`)
+      .send({ name: 'Switch Store', address: 'Abuja', imageUrl: 'https://x.com/i.jpg' });
+    const itemId = await addMenuItem(vendor.body.token, store.body._id, 'Suya', 1500);
+    const token = await loginUser('switch@test.com');
+    const body = {
+      storeId: store.body._id, customerName: 'A', customerPhone: '08012345678',
+      customerAddress: 'Abuja', items: [{ menuItemId: itemId, quantity: 1 }],
+    };
+
+    const blocked = await request(app).post('/api/orders').set('Authorization', `Bearer ${token}`).send(body);
+    expect(blocked.status).toBe(403);
+
+    process.env.REQUIRE_PHONE_VERIFICATION = 'false';
+    const ok = await request(app).post('/api/orders').set('Authorization', `Bearer ${token}`).send(body);
+    expect(ok.status).toBe(201);
+  });
+
+  it('the rate limiter blocks after the limit', async () => {
+    const express = require('express');
+    const { rateLimit } = require('../utils/rateLimit');
+    const mini = express();
+    mini.get('/x', rateLimit({ name: 'unit', max: 2, windowMs: 60000, enabledInTests: true }), (req, res) => res.send('ok'));
+    expect((await request(mini).get('/x')).status).toBe(200);
+    expect((await request(mini).get('/x')).status).toBe(200);
+    const third = await request(mini).get('/x');
+    expect(third.status).toBe(429);
+    expect(third.headers['retry-after']).toBeDefined();
+  });
+});
+
+describe('Online payments & earnings split', () => {
+  const paystack = require('../utils/paystackPayments');
+  let customerToken;
+  let storeId;
+  let itemId;
+  let vendorToken;
+
+  beforeAll(() => {
+    process.env.PAYSTACK_API_KEY = 'sk_test_dummy';
+  });
+  afterAll(() => {
+    process.env.PAYSTACK_API_KEY = '';
+  });
+
+  beforeEach(async () => {
+    process.env.REQUIRE_PHONE_VERIFICATION = 'false';
+    const vendor = await registerVendor({ email: 'pay-vendor@test.com' });
+    vendorToken = vendor.body.token;
+    const store = await request(app)
+      .post('/api/stores')
+      .set('Authorization', `Bearer ${vendorToken}`)
+      .send({ name: 'Pay Store', address: 'Abuja', imageUrl: 'https://x.com/i.jpg' });
+    storeId = store.body._id;
+    itemId = await addMenuItem(vendorToken, storeId, 'Jollof', 2000);
+    customerToken = await loginUser('payer@test.com');
+  });
+  afterEach(() => {
+    process.env.REQUIRE_PHONE_VERIFICATION = 'true';
+  });
+
+  const placeOnline = () =>
+    request(app).post('/api/orders').set('Authorization', `Bearer ${customerToken}`).send({
+      storeId, customerName: 'Payer', customerPhone: '08012345678', customerAddress: 'Abuja',
+      items: [{ menuItemId: itemId, quantity: 2 }], paymentMethod: 'online',
+    });
+
+  it('stores the vendor / rider / platform split and it adds up to the total', async () => {
+    const res = await placeOnline();
+    expect(res.status).toBe(201);
+    const { vendorEarning, riderEarning, platformEarning, totalPaid } = res.body;
+    expect(vendorEarning).toBe(4000);
+    expect(riderEarning).toBe(800);
+    expect(platformEarning).toBe(200); // 5% service fee
+    expect(vendorEarning + riderEarning + platformEarning).toBe(totalPaid);
+  });
+
+  it('online order: hidden from vendor and blocked until paid, then goes through', async () => {
+    const order = (await placeOnline()).body;
+    expect(order.paymentStatus).toBe('pending');
+
+    const init = await request(app)
+      .post('/api/payments/paystack/initialize')
+      .set('Authorization', `Bearer ${customerToken}`)
+      .send({ orderId: order._id });
+    expect(init.status).toBe(200);
+    expect(init.body.authorizationUrl).toMatch(/paystack/);
+
+    const vendorId = order.vendorId;
+    const listBefore = await request(app).get(`/api/orders/vendor/${vendorId}`).set('Authorization', `Bearer ${vendorToken}`);
+    expect(listBefore.body).toHaveLength(0);
+    const early = await request(app)
+      .patch(`/api/orders/${order._id}/status`).set('Authorization', `Bearer ${vendorToken}`).send({ status: 'preparing' });
+    expect(early.status).toBe(400);
+
+    // Paystack says: paid in full
+    paystack.verifyTransaction.mockResolvedValueOnce({
+      status: 'success', amountNaira: order.totalPaid, currency: 'NGN', reference: init.body.reference, paidAt: new Date().toISOString(),
+    });
+    const verify = await request(app).get(`/api/payments/paystack/verify?reference=${init.body.reference}`);
+    expect(verify.body.paymentStatus).toBe('paid');
+
+    const listAfter = await request(app).get(`/api/orders/vendor/${vendorId}`).set('Authorization', `Bearer ${vendorToken}`);
+    expect(listAfter.body).toHaveLength(1);
+    const go = await request(app)
+      .patch(`/api/orders/${order._id}/status`).set('Authorization', `Bearer ${vendorToken}`).send({ status: 'preparing' });
+    expect(go.status).toBe(200);
+  });
+
+  it('does not mark paid when Paystack reports less than the total', async () => {
+    const order = (await placeOnline()).body;
+    const init = await request(app)
+      .post('/api/payments/paystack/initialize').set('Authorization', `Bearer ${customerToken}`).send({ orderId: order._id });
+    paystack.verifyTransaction.mockResolvedValueOnce({ status: 'success', amountNaira: 10, currency: 'NGN', reference: init.body.reference });
+    const verify = await request(app).get(`/api/payments/paystack/verify?reference=${init.body.reference}`);
+    expect(verify.body.paymentStatus).toBe('failed');
+  });
+
+  it('webhook rejects a bad signature and accepts a correctly signed one', async () => {
+    const crypto = require('crypto');
+    const order = (await placeOnline()).body;
+    const init = await request(app)
+      .post('/api/payments/paystack/initialize').set('Authorization', `Bearer ${customerToken}`).send({ orderId: order._id });
+    const payload = JSON.stringify({ event: 'charge.success', data: { reference: init.body.reference } });
+
+    const bad = await request(app).post('/api/payments/paystack/webhook')
+      .set('Content-Type', 'application/json').set('x-paystack-signature', 'nope').send(payload);
+    expect(bad.status).toBe(401);
+
+    paystack.verifyTransaction.mockResolvedValueOnce({ status: 'success', amountNaira: order.totalPaid, currency: 'NGN', reference: init.body.reference });
+    const sig = crypto.createHmac('sha512', process.env.PAYSTACK_API_KEY).update(payload).digest('hex');
+    const good = await request(app).post('/api/payments/paystack/webhook')
+      .set('Content-Type', 'application/json').set('x-paystack-signature', sig).send(payload);
+    expect(good.status).toBe(200);
+
+    await new Promise((r) => setTimeout(r, 100)); // webhook finishes after replying
+    const Order = require('../models/orderModel');
+    expect((await Order.findById(order._id)).paymentStatus).toBe('paid');
+  });
+
+  it('guests cannot choose online payment', async () => {
+    const res = await request(app).post('/api/orders').send({
+      storeId, customerName: 'Guest', customerPhone: '08012345678', customerAddress: 'Abuja',
+      items: [{ menuItemId: itemId, quantity: 1 }], paymentMethod: 'online',
+    });
+    expect(res.status).toBe(400);
+  });
+});
+
+describe('Distance-based delivery fee', () => {
+  const { deliveryFeeFor } = require('../utils/deliveryFee');
+  const wuse = { latitude: 9.0765, longitude: 7.4803 };
+
+  it('charges more the further it goes, within min/max, rounded to ₦50', () => {
+    expect(deliveryFeeFor(wuse, wuse).fee).toBe(500);                 // minimum
+    const garki = deliveryFeeFor(wuse, { latitude: 9.0333, longitude: 7.4833 });
+    expect(garki.distanceKm).toBeGreaterThan(5);
+    expect(garki.fee % 50).toBe(0);
+    expect(garki.fee).toBeGreaterThan(500);
+    expect(deliveryFeeFor(wuse, { latitude: 6.45, longitude: 3.47 }).tooFar).toBe(true);
+    expect(deliveryFeeFor(null, wuse)).toMatchObject({ fee: 800, distanceKm: null }); // unknown → flat
+  });
+
+  it('orders and quotes use the store-to-customer distance; too far is refused', async () => {
+    const vendor = await registerVendor({ email: 'distance-vendor@test.com' });
+    const store = await request(app)
+      .post('/api/stores')
+      .set('Authorization', `Bearer ${vendor.body.token}`)
+      .send({ name: 'Wuse Kitchen', address: 'Wuse 2, Abuja', imageUrl: 'https://x.com/i.jpg', lat: 9.0765, lng: 7.4803 });
+    const itemId = await addMenuItem(vendor.body.token, store.body._id, 'Pepper soup', 3000);
+    const base = { storeId: store.body._id, items: [{ menuItemId: itemId, quantity: 1 }] };
+
+    const near = await request(app).post('/api/orders/quote')
+      .send({ ...base, customerLatitude: 9.0333, customerLongitude: 7.4833 });
+    expect(near.status).toBe(200);
+    expect(near.body.distanceKm).toBeGreaterThan(5);
+    expect(near.body.deliveryFee).toBe(deliveryFeeFor(wuse, { latitude: 9.0333, longitude: 7.4833 }).fee);
+
+    const order = await request(app).post('/api/orders').send({
+      ...base, customerName: 'A', customerPhone: '08012345678', customerAddress: 'Garki, Abuja',
+      customerLatitude: 9.0333, customerLongitude: 7.4833,
+    });
+    expect(order.status).toBe(201);
+    expect(order.body.deliveryFee).toBe(near.body.deliveryFee);
+    expect(order.body.riderEarning).toBe(near.body.deliveryFee); // the rider gets the delivery fee
+
+    const far = await request(app).post('/api/orders/quote')
+      .send({ ...base, customerLatitude: 6.45, customerLongitude: 3.47 });
+    expect(far.status).toBe(400);
+    expect(far.body.tooFar).toBe(true);
+  });
+});
+
+describe('Nigerian-time day boundaries', () => {
+  const { startOfToday, startOfMonth, startOfYear } = require('../utils/time');
+  it('00:30 in Lagos counts as the new day, month and year', () => {
+    // 23:30 UTC on 31 Dec = 00:30 on 1 Jan in Lagos (UTC+1)
+    const now = new Date('2026-12-31T23:30:00Z');
+    expect(startOfToday(now).toISOString()).toBe('2026-12-31T23:00:00.000Z');
+    expect(startOfMonth(now).toISOString()).toBe('2026-12-31T23:00:00.000Z');
+    expect(startOfYear(now).toISOString()).toBe('2026-12-31T23:00:00.000Z');
+  });
+  it('22:30 in Lagos is still the same day', () => {
+    const now = new Date('2026-06-15T21:30:00Z');
+    expect(startOfToday(now).toISOString()).toBe('2026-06-14T23:00:00.000Z');
   });
 });

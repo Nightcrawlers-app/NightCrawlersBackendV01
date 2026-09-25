@@ -198,12 +198,6 @@ router.post('/me/kyc/tin', protect, requireRole('vendor'), async (req, res) => {
     await updateVendorKycStatus(vendor);
 
     // comment out later
-    console.log('VENDOR KYC AFTER TIN:', {
-      cacVerified: vendor.cacVerified,
-      tinVerified: vendor.tinVerified,
-      isInformalVendor: vendor.isInformalVendor,
-      kycStatus: vendor.kycStatus,
-    });
 
     res.json({
       message: 'TIN verified successfully.',
@@ -299,7 +293,7 @@ router.post('/me/kyc/terms', protect, requireRole('vendor'), async (req, res) =>
       kycStatus: vendor.kycStatus,
     });
   } catch (err) {
-    console.log('TERMS ROUTE ERROR:', err.message); // comment out later
+    console.error('Terms route error:', err.message);
     res.status(500).json({ message: err.message });
   }
 });
