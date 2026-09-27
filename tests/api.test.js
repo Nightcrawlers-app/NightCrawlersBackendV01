@@ -1540,7 +1540,8 @@ describe('Geolocation', () => {
       .patch(`/api/riders/${reg.body.rider._id}/location`)
       .set('Authorization', `Bearer ${reg.body.token}`)
       .send({ latitude: 9.07, longitude: 7.48 });
-    expect(res.status).toBe(204);
+    expect(res.status).toBe(200);
+    expect(res.body.trips).toEqual([]); // no active order yet
   });
 
   it('customer addresses accept coordinates and come back with id + lat/lng', async () => {
@@ -1982,6 +1983,61 @@ describe('Order tracking', () => {
     const other = await loginUser('nosy@test.com');
     const blocked = await request(app).get(`/api/orders/${order._id}/track`).set('Authorization', `Bearer ${other}`);
     expect(blocked.status).toBe(403);
+    process.env.REQUIRE_PHONE_VERIFICATION = 'true';
+  });
+});
+
+describe('Live trip and arrival check', () => {
+  it('tracks the rider to the customer and only allows "delivered" at the address', async () => {
+    process.env.REQUIRE_PHONE_VERIFICATION = 'false';
+    const vendor = await registerVendor({ email: 'trip-vendor@test.com' });
+    const store = await request(app)
+      .post('/api/stores')
+      .set('Authorization', `Bearer ${vendor.body.token}`)
+      .send({ name: 'Trip Kitchen', address: 'Wuse 2', imageUrl: 'https://x.com/i.jpg', lat: 9.0765, lng: 7.4803 });
+    const itemId = await addMenuItem(vendor.body.token, store.body._id, 'Suya', 3000);
+    const customer = await loginUser('trip-customer@test.com');
+    const HOME = { latitude: 9.0333, longitude: 7.4833 }; // Garki
+    const order = (await request(app).post('/api/orders').set('Authorization', `Bearer ${customer}`).send({
+      storeId: store.body._id, customerName: 'C', customerPhone: '08012345678', customerAddress: 'Garki',
+      customerLatitude: HOME.latitude, customerLongitude: HOME.longitude, items: [{ menuItemId: itemId, quantity: 1 }],
+    })).body;
+    const vs = (status) => request(app).patch(`/api/orders/${order._id}/status`).set('Authorization', `Bearer ${vendor.body.token}`).send({ status });
+    await vs('preparing');
+    await vs('ready');
+
+    const rider = await registerRider({ email: 'trip-rider@test.com' });
+    const rt = rider.body.token;
+    const riderId = rider.body.rider._id;
+    await request(app).post(`/api/orders/${order._id}/accept`).set('Authorization', `Bearer ${rt}`);
+    const move = (p) => request(app).patch(`/api/riders/${riderId}/location`).set('Authorization', `Bearer ${rt}`).send(p);
+
+    // Heading to the store
+    let r = await move({ latitude: 9.06, longitude: 7.47 });
+    expect(r.body.trips[0].destination).toBe('store');
+    await request(app).patch(`/api/orders/${order._id}/status`).set('Authorization', `Bearer ${rt}`).send({ status: 'picked_up' });
+
+    // At the store, heading to the customer: distance/time left, visible to the customer too
+    r = await move({ latitude: 9.0765, longitude: 7.4803 });
+    const trip = r.body.trips[0];
+    expect(trip.destination).toBe('customer');
+    expect(trip.distanceKm).toBeGreaterThan(3);
+    expect(trip.durationMin).toBeGreaterThan(0);
+    expect(trip.arrived).toBe(false);
+    const track = await request(app).get(`/api/orders/${order._id}/track`).set('Authorization', `Bearer ${customer}`);
+    expect(track.body.trip.distanceKm).toBe(trip.distanceKm);
+    expect(track.body.trip.riderLocation.latitude).toBeCloseTo(9.0765);
+
+    // Too far away: refused
+    const early = await request(app).patch(`/api/orders/${order._id}/status`).set('Authorization', `Bearer ${rt}`).send({ status: 'delivered' });
+    expect(early.status).toBe(400);
+    expect(early.body.notArrived).toBe(true);
+
+    // At the door: allowed
+    r = await move({ latitude: HOME.latitude + 0.0005, longitude: HOME.longitude }); // ~55 m away
+    expect(r.body.trips[0].arrived).toBe(true);
+    const done = await request(app).patch(`/api/orders/${order._id}/status`).set('Authorization', `Bearer ${rt}`).send({ status: 'delivered' });
+    expect(done.status).toBe(200);
     process.env.REQUIRE_PHONE_VERIFICATION = 'true';
   });
 });

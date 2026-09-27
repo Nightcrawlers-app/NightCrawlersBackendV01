@@ -114,7 +114,22 @@ router.patch('/:id/location', protect, requireRole('rider'), async (req, res) =>
       locationUpdatedAt: new Date(),
       lastSeen: new Date(),
     });
-    res.status(204).end();
+
+    // Update the live trip on any order this rider is carrying, and send the
+    // progress straight back so the rider's screen updates with each fix.
+    const Order = require('../models/orderModel');
+    const { updateTrip } = require('../utils/tripProgress');
+    const accuracy = Number(req.body.accuracy) || 0;
+    const active = await Order.find({ riderId: req.params.id, status: { $in: ['accepted', 'picked_up', 'in_transit'] } });
+    const trips = [];
+    for (const order of active) {
+      const trip = await updateTrip(order, point, accuracy);
+      if (trip) {
+        await order.save();
+        trips.push({ orderId: String(order._id), ...trip, routedFrom: undefined });
+      }
+    }
+    res.json({ trips });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

@@ -85,6 +85,12 @@ const OrderSchema = new mongoose.Schema(
         at: { type: Date, default: Date.now },
       },
     ],
+    // Live trip progress while a rider has the order (see utils/tripProgress.js):
+    // { destination: 'store'|'customer', distanceKm, durationMin, line: [[lat,lng]...],
+    //   riderLocation: {latitude, longitude, accuracy, at}, arrived, source, updatedAt, ... }
+    trip: { type: mongoose.Schema.Types.Mixed, default: null },
+    // Set when a delivery was confirmed without a map location to check against
+    deliveredUnverified: { type: Boolean, default: false },
     acceptedAt: { type: Date, default: null },
     pickedUpAt: { type: Date, default: null },
     deliveredAt: { type: Date, default: null },

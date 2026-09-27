@@ -68,23 +68,23 @@ const generateCode = () =>
 
 const wrap = (content) => `
   <div style="font-family:Poppins,sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border:1px solid #eaecf0;border-radius:12px">
-    <h1 style="color:#C62222;font-size:24px;margin:0 0 24px">Nightcrawlers</h1>
+    <h1 style="color:#E00B0B;font-size:24px;margin:0 0 24px">Nightcrawlers</h1>
     ${content}
     <p style="color:#98a2b3;font-size:12px;margin:32px 0 0;border-top:1px solid #eaecf0;padding-top:16px">
-      Nightcrawlers Inc. · Lagos, Nigeria<br/>
-      Questions? Email <a href="mailto:${process.env.SMTP_FROM}" style="color:#C62222">${process.env.SMTP_FROM}</a>
+      Nightcrawlers Limited · Lagos, Nigeria<br/>
+      Questions? Email <a href="mailto:${process.env.SMTP_FROM}" style="color:#E00B0B">${process.env.SMTP_FROM}</a>
     </p>
   </div>
 `;
 
 const codeBlock = (code) => `
   <div style="background:#f9fafb;border:1px solid #eaecf0;border-radius:8px;padding:24px;text-align:center;margin:0 0 24px">
-    <span style="font-size:36px;font-weight:700;letter-spacing:12px;color:#C62222">${code}</span>
+    <span style="font-size:36px;font-weight:700;letter-spacing:12px;color:#E00B0B">${code}</span>
   </div>
 `;
 
 const button = (href, label) => `
-  <a href="${href}" style="display:inline-block;background:#C62222;color:#fff;text-decoration:none;padding:12px 28px;border-radius:6px;font-weight:600;font-size:15px;margin:0 0 24px">
+  <a href="${href}" style="display:inline-block;background:#E00B0B;color:#fff;text-decoration:none;padding:12px 28px;border-radius:6px;font-weight:600;font-size:15px;margin:0 0 24px">
     ${label}
   </a>
 `;
@@ -205,7 +205,7 @@ const sendAccountUpdatedEmail = async (to, firstName, changes) => {
       </ul>
       <p style="color:#667085;font-size:13px;margin:0">
         If you didn't make these changes, please contact us immediately at
-        <a href="mailto:${process.env.SMTP_FROM}" style="color:#C62222">${process.env.SMTP_FROM}</a>.
+        <a href="mailto:${process.env.SMTP_FROM}" style="color:#E00B0B">${process.env.SMTP_FROM}</a>.
       </p>
     `),
   });
@@ -234,7 +234,7 @@ const sendVendorWelcomeEmail = async (to, firstName, businessType) => {
       </div>
       <p style="color:#667085;font-size:13px;margin:0">
         Questions? Reply to this email or contact us at
-        <a href="mailto:${process.env.SMTP_FROM}" style="color:#C62222">${process.env.SMTP_FROM}</a>.
+        <a href="mailto:${process.env.SMTP_FROM}" style="color:#E00B0B">${process.env.SMTP_FROM}</a>.
       </p>
     `),
   });
@@ -271,7 +271,7 @@ const sendVendorRejectedEmail = async (to, firstName, reason = '') => {
         You can fix anything that's needed and reapply from your dashboard, or contact us with questions.
       </p>
       <p style="color:#667085;font-size:13px;margin:0">
-        Email us at <a href="mailto:${process.env.SMTP_FROM}" style="color:#C62222">${process.env.SMTP_FROM}</a>.
+        Email us at <a href="mailto:${process.env.SMTP_FROM}" style="color:#E00B0B">${process.env.SMTP_FROM}</a>.
       </p>
     `),
   });
@@ -298,7 +298,7 @@ const sendRiderWelcomeEmail = async (to, firstName, vehicleType) => {
       </div>
       <p style="color:#667085;font-size:13px;margin:0">
         Hello there! Questions? Contact us at
-        <a href="mailto:${process.env.SMTP_FROM}" style="color:#C62222">${process.env.SMTP_FROM}</a>.
+        <a href="mailto:${process.env.SMTP_FROM}" style="color:#E00B0B">${process.env.SMTP_FROM}</a>.
       </p>
     `),
   });
@@ -334,7 +334,7 @@ const sendRiderRejectedEmail = async (to, firstName, reason = '') => {
         You can fix anything that's needed and reapply from your dashboard, or contact us with questions.
       </p>
       <p style="color:#667085;font-size:13px;margin:0">
-        Email us at <a href="mailto:${process.env.SMTP_FROM}" style="color:#C62222">${process.env.SMTP_FROM}</a>.
+        Email us at <a href="mailto:${process.env.SMTP_FROM}" style="color:#E00B0B">${process.env.SMTP_FROM}</a>.
       </p>
     `),
   });

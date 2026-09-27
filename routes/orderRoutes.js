@@ -5,6 +5,7 @@ const Store = require('../models/storeModel');
 const { priceOrder, PricingError } = require('../utils/orderPricing');
 const { phoneVerificationRequired } = require('../utils/settings');
 const { estimateDelivery, reachedAt } = require('../utils/orderEta');
+const { arrivalCheck } = require('../utils/tripProgress');
 const { haversineKm } = require('../utils/deliveryFee');
 const { protect, requireRole, optionalAuth } = require('../middlewares/auth');
 const { geocodeAddress, readLatLng, toPoint, fromPoint } = require('../utils/geocoder');
@@ -218,7 +219,15 @@ router.get('/:id/track', protect, async (req, res) => {
     if (!allowed) return res.status(403).json({ message: 'Forbidden' });
 
     const store = await Store.findById(order.storeId, 'name address businessType');
-    const eta = estimateDelivery(order, { businessType: store?.businessType });
+    let eta = estimateDelivery(order, { businessType: store?.businessType });
+
+    // On the way to the customer with a fresh route: use the real road time.
+    const trip = order.trip;
+    const tripFresh = trip?.updatedAt && Date.now() - new Date(trip.updatedAt).getTime() < 3 * 60 * 1000;
+    if (tripFresh && trip.destination === 'customer') {
+      const earliest = new Date(Date.now() + trip.durationMin * 60 * 1000);
+      eta = { earliest, latest: new Date(earliest.getTime() + 5 * 60 * 1000) };
+    }
 
     // Rider details only once someone has accepted it — and only what the
     // customer needs: first name, vehicle, phone, and how far away they are.
@@ -256,6 +265,21 @@ router.get('/:id/track', protect, async (req, res) => {
         cancelled: at('cancelled'),
       },
       eta: eta && { earliest: eta.earliest, latest: eta.latest },
+      // Live trip for the map: where the rider is, the road route, time/distance left
+      trip:
+        tripFresh && ['accepted', 'picked_up', 'in_transit'].includes(order.status)
+          ? {
+              destination: trip.destination,
+              distanceKm: trip.distanceKm,
+              durationMin: trip.durationMin,
+              line: trip.line,
+              riderLocation: { latitude: trip.riderLocation.latitude, longitude: trip.riderLocation.longitude },
+              arrived: trip.arrived,
+              updatedAt: trip.updatedAt,
+            }
+          : null,
+      pickupPoint: order.pickupCoordinates?.coordinates?.length === 2 ? fromPoint(order.pickupCoordinates) : null,
+      deliveryPoint: order.deliveryCoordinates?.coordinates?.length === 2 ? fromPoint(order.deliveryCoordinates) : null,
       store: store && { name: store.name, address: store.address, businessType: store.businessType },
       rider,
       deliveryAddress: order.customerAddress,
@@ -338,9 +362,38 @@ router.patch('/:id/status', protect, async (req, res) => {
       return res.status(403).json({ message: 'Forbidden' });
     }
 
+    // A rider can only complete a delivery AT the delivery address. Their live
+    // position (sent with the request, or their last one from the past two
+    // minutes) must be within ARRIVAL_RADIUS_METERS of the customer's pin.
+    if (status === 'delivered' && role === 'rider') {
+      let point = readLatLng(req.body);
+      let accuracy = Number(req.body.accuracy) || 0;
+      if (!point) {
+        const Rider = require('../models/riderModel');
+        const r = await Rider.findById(id, 'coordinates locationUpdatedAt');
+        const fresh = r?.locationUpdatedAt && Date.now() - new Date(r.locationUpdatedAt).getTime() < 2 * 60 * 1000;
+        point = fresh && r.coordinates?.coordinates?.length === 2 ? fromPoint(r.coordinates) : null;
+        accuracy = 0;
+      }
+      if (!point) {
+        return res.status(400).json({ message: 'Turn on your location so we can confirm you are at the delivery address.', needsLocation: true });
+      }
+      const check = arrivalCheck(order, point, accuracy);
+      if (!check.arrived) {
+        const away = check.metersAway >= 1000 ? `${(check.metersAway / 1000).toFixed(1)} km` : `${check.metersAway} m`;
+        return res.status(400).json({
+          message: `You're about ${away} from the delivery address. You can mark it delivered when you arrive.`,
+          notArrived: true,
+          metersAway: check.metersAway,
+        });
+      }
+      if (!check.verifiable) order.deliveredUnverified = true; // no pin to check against
+    }
+
     order.status = status;
     if (status === 'picked_up') order.pickedUpAt = new Date();
     if (status === 'delivered') order.deliveredAt = new Date();
+    if (['delivered', 'cancelled'].includes(status)) order.trip = null;
     order.statusHistory.push({ status, at: new Date() });
 
     await order.save();
