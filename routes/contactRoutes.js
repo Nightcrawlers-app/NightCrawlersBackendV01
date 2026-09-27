@@ -79,9 +79,9 @@ router.post('/newsletter', rateLimit(), async (req, res) => {
 
     const existing = await Subscriber.findOne({ email });
     if (existing && existing.status === 'subscribed') {
-      // Same response either way — don't reveal who is on the list.
-      return res.status(200).json({ message: "You're on the list." });
+      return res.status(200).json({ message: "Looks like you're already on the list.", alreadySubscribed: true });
     }
+    const welcomeBack = Boolean(existing); // had unsubscribed before
 
     const sub = existing || new Subscriber({ email });
     sub.status = 'subscribed';
@@ -93,7 +93,10 @@ router.post('/newsletter', rateLimit(), async (req, res) => {
       console.error('Newsletter welcome email failed:', err.message)
     );
 
-    res.status(201).json({ message: "You're on the list." });
+    res.status(201).json({
+      message: welcomeBack ? "Welcome back! You're on the list again." : "Thanks, you're on the list.",
+      alreadySubscribed: false,
+    });
   } catch (err) {
     console.error('Newsletter subscribe failed:', err);
     res.status(500).json({ message: 'Could not subscribe you just now. Please try again.' });

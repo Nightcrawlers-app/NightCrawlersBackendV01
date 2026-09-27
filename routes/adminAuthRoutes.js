@@ -9,7 +9,7 @@ const sendCodeLimit = rateLimit({ name: 'send-code', max: 5, windowMs: 60 * MIN,
 const checkCodeLimit = rateLimit({ name: 'check-code', max: 15, windowMs: 15 * MIN, key: byIpAndEmail });
 const router = express.Router();
 const Admin = require('../models/adminModel');
-const { signToken } = require('../utils/signToken');
+const { signToken, ADMIN_SESSION } = require('../utils/signToken');
 const { protect, requireRole } = require('../middlewares/auth');
 
 // POST /api/admins/login
@@ -21,7 +21,7 @@ router.post('/login', loginIpLimit, loginLimit, async (req, res) => {
       return res.status(401).json({ message: 'Access Denied: Invalid credentials.' });
     }
 
-    const token = signToken(admin._id, 'admin');
+    const token = signToken(admin._id, 'admin', { expiresIn: ADMIN_SESSION() });
     res.json({ token, admin: admin.toSafeJSON() });
   } catch (err) {
     res.status(500).json({ message: err.message });

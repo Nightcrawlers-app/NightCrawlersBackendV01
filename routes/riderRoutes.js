@@ -10,7 +10,7 @@ const checkCodeLimit = rateLimit({ name: 'check-code', max: 15, windowMs: 15 * M
 const { readLatLng, toPoint, geocodeAddress } = require('../utils/geocoder');
 const router = express.Router();
 const Rider = require('../models/riderModel');
-const { signToken } = require('../utils/signToken');
+const { signToken, rememberFrom } = require('../utils/signToken');
 const { protect, requireRole } = require('../middlewares/auth');
 const { sendRiderWelcomeEmail } = require('../utils/mailer'); // ✅ ADDED
 
@@ -64,7 +64,7 @@ router.post('/login', loginIpLimit, loginLimit, async (req, res) => {
       return res.status(401).json({ message: 'Incorrect email or password.' });
     }
 
-    const token = signToken(rider._id, 'rider');
+    const token = signToken(rider._id, 'rider', { remember: rememberFrom(req) });
     res.json({ token, rider: rider.toSafeJSON() });
   } catch (err) {
     res.status(500).json({ message: err.message });

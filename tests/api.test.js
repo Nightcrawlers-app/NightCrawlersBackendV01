@@ -1477,6 +1477,8 @@ describe('Contact & newsletter', () => {
     expect(first.status).toBe(201);
     const again = await request(app).post('/api/newsletter').send({ email: 'sub@test.com' });
     expect(again.status).toBe(200);
+    expect(again.body.alreadySubscribed).toBe(true);
+    expect(again.body.message).toMatch(/already on the list/);
     const Subscriber = require('../models/subscriberModel');
     expect(await Subscriber.countDocuments()).toBe(1);
   });
@@ -2039,5 +2041,32 @@ describe('Live trip and arrival check', () => {
     const done = await request(app).patch(`/api/orders/${order._id}/status`).set('Authorization', `Bearer ${rt}`).send({ status: 'delivered' });
     expect(done.status).toBe(200);
     process.env.REQUIRE_PHONE_VERIFICATION = 'true';
+  });
+});
+
+describe('Remember me', () => {
+  const jwt = require('jsonwebtoken');
+  const daysValid = (token) => {
+    const { iat, exp } = jwt.decode(token);
+    return Math.round((exp - iat) / 86400);
+  };
+  it('login lasts 30 days when remembered, 1 day when not', async () => {
+    await registerUser({ email: 'remember@test.com' });
+    await verifyUser('remember@test.com');
+    const long = await request(app).post('/api/auth/login').send({ email: 'remember@test.com', password: 'password123', remember: true });
+    expect(daysValid(long.body.token)).toBe(30);
+    const short = await request(app).post('/api/auth/login').send({ email: 'remember@test.com', password: 'password123', remember: false });
+    expect(daysValid(short.body.token)).toBe(1);
+
+    const v = await registerVendor({ email: 'remember-vendor@test.com' });
+    const vs = await request(app).post('/api/vendors/login').send({ email: 'remember-vendor@test.com', password: 'password123', remember: false });
+    expect(daysValid(vs.body.token)).toBe(1);
+    expect(daysValid(v.body.token)).toBe(30); // signup stays signed in
+  });
+
+  it('admin sessions last 8 hours', async () => {
+    const { token } = await createAdmin();
+    const { iat, exp } = jwt.decode(token);
+    expect((exp - iat) / 3600).toBe(8);
   });
 });

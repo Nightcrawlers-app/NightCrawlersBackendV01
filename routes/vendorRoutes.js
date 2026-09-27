@@ -11,7 +11,7 @@ const router = express.Router();
 const Vendor = require('../models/vendorModel');
 const { BUSINESS_TYPES } = require('../models/vendorModel');
 const { geocodeAddress, readLatLng, toPoint } = require('../utils/geocoder');
-const { signToken } = require('../utils/signToken');
+const { signToken, rememberFrom } = require('../utils/signToken');
 const { protect, requireRole } = require('../middlewares/auth');
 const { sendVendorWelcomeEmail } = require('../utils/mailer');
 
@@ -77,7 +77,7 @@ router.post('/login', loginIpLimit, loginLimit, async (req, res) => {
       return res.status(401).json({ message: 'Incorrect email or password.' });
     }
 
-    const token = signToken(vendor._id, 'vendor');
+    const token = signToken(vendor._id, 'vendor', { remember: rememberFrom(req) });
     res.json({ token, vendor: vendor.toSafeJSON() });
   } catch (err) {
     res.status(500).json({ message: err.message });

@@ -9,7 +9,7 @@ const sendCodeLimit = rateLimit({ name: 'send-code', max: 5, windowMs: 60 * MIN,
 const checkCodeLimit = rateLimit({ name: 'check-code', max: 15, windowMs: 15 * MIN, key: byIpAndEmail });
 const router = express.Router();
 const User = require('../models/userModel');
-const { signToken } = require('../utils/signToken');
+const { signToken, rememberFrom } = require('../utils/signToken');
 const { protect } = require('../middlewares/auth');
 const {
   generateCode,
@@ -228,7 +228,7 @@ router.post('/login', loginIpLimit, loginLimit, async (req, res) => {
     user.lastKnownIp = currentIp;
     await user.save();
 
-    const token = signToken(user._id, 'customer');
+    const token = signToken(user._id, 'customer', { remember: rememberFrom(req) });
     res.json({ token, user: user.toSafeJSON() });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -267,7 +267,7 @@ router.post('/verify-login', checkCodeLimit, async (req, res) => {
     user.loginCodeAttempts = 0;
     await user.save();
  
-    const token = signToken(user._id, 'customer');
+    const token = signToken(user._id, 'customer', { remember: rememberFrom(req) });
     res.json({ token, user: user.toSafeJSON() });
   } catch (err) {
     res.status(500).json({ message: err.message });
