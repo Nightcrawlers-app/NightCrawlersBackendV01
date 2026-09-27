@@ -120,7 +120,7 @@ const sendViaSendchamp = async (to, message) => {
  */
 const sendPhoneVerificationCode = async (phone, code, firstName = '') => {
   const greeting = firstName ? `Hi ${firstName}, ` : '';
-  const message = `${greeting}your NightCrawlers verification code is ${code}. It expires in 30 minutes. Do not share this code with anyone.`;
+  const message = `${greeting}your Nightcrawlers verification code is ${code}. It expires in 30 minutes. Do not share this code with anyone.`;
 
   // Local development only: print the code so you can finish the flow even
   // when the SMS doesn't arrive. Never runs in production.
@@ -136,7 +136,7 @@ const sendPhoneVerificationCode = async (phone, code, firstName = '') => {
  */
 const sendPhoneVerifiedConfirmation = async (phone, firstName = '') => {
   const greeting = firstName ? `Hi ${firstName}, ` : '';
-  const message = `${greeting}your phone number has been verified on NightCrawlers. You're all set!`;
+  const message = `${greeting}your phone number has been verified on Nightcrawlers. You're all set!`;
   return sendSms(phone, message);
 };
 

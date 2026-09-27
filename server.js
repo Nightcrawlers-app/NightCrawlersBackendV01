@@ -1,6 +1,9 @@
 require('dotenv').config();
 const app = require('./app');
+const connectDB = require('./config/dbConfig');
 const PORT = process.env.PORT || 5000;
+
+connectDB();
 
 // Log clearly at boot whether email works, instead of failing silently later.
 require('./utils/mailer').verifyMailer();

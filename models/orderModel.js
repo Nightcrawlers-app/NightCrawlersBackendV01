@@ -77,6 +77,14 @@ const OrderSchema = new mongoose.Schema(
     paystackReference: { type: String, default: null, index: true },
     paidAt: { type: Date, default: null },
     status: { type: String, enum: ORDER_STATUSES, default: 'pending', index: true },
+    // Every status change with its time (server clock), for the tracking page.
+    statusHistory: [
+      {
+        _id: false,
+        status: { type: String, enum: ORDER_STATUSES },
+        at: { type: Date, default: Date.now },
+      },
+    ],
     acceptedAt: { type: Date, default: null },
     pickedUpAt: { type: Date, default: null },
     deliveredAt: { type: Date, default: null },

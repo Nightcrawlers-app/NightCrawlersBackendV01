@@ -21,13 +21,28 @@ const MAX_RADIUS_M = 50000;
  * Add a `promotions` list ({ id, badge, title }) to each store so cards can
  * show "50% OFF" badges. Live promos are few, so this is one small query.
  */
+/** Store ids that sell at least one item matching the promo's keywords (null = no keywords). */
+const storesWithMatchingItems = async (promo) => {
+  if (!(promo.itemKeywords || []).length) return null;
+  const MenuItem = require('../models/menuItemModel');
+  const rx = promo.itemKeywords.map((k) => new RegExp(k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
+  const ids = await MenuItem.distinct('storeId', { $or: [{ name: { $in: rx } }, { categories: { $in: rx } }] });
+  return new Set(ids.map(String));
+};
+
 const withPromotions = async (stores) => {
   const Promotion = require('../models/promotionModel');
   const live = await Promotion.findLive();
+  const itemStores = new Map();
+  for (const p of live) itemStores.set(String(p._id), await storesWithMatchingItems(p));
   return stores.map((s) => ({
     ...s,
     promotions: live
       .filter((p) => p.appliesToStore(s))
+      .filter((p) => {
+        const set = itemStores.get(String(p._id));
+        return !set || set.has(String(s._id));
+      })
       .map((p) => ({ id: String(p._id), badge: p.badge || p.title, title: p.title })),
   }));
 };
@@ -76,7 +91,11 @@ router.get('/', optionalAuth, async (req, res) => {
         : null;
       if (!promo || !promo.isLive()) return res.json([]);
       if (promo.scope === 'category') query.businessType = promo.businessType;
-      if (promo.scope === 'stores') query._id = { $in: promo.storeIds };
+      let ids = promo.scope === 'stores' ? promo.storeIds.map(String) : null;
+      // "20% off pizza" → only stores that actually sell pizza
+      const withItems = await storesWithMatchingItems(promo);
+      if (withItems) ids = ids ? ids.filter((id) => withItems.has(id)) : [...withItems];
+      if (ids) query._id = { $in: ids.map((id) => new (require('mongoose').Types.ObjectId)(id)) };
     }
 
     if (category && category !== 'All') {

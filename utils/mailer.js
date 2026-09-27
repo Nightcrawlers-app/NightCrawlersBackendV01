@@ -68,10 +68,10 @@ const generateCode = () =>
 
 const wrap = (content) => `
   <div style="font-family:Poppins,sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff;border:1px solid #eaecf0;border-radius:12px">
-    <h1 style="color:#C62222;font-size:24px;margin:0 0 24px">Night Crawlers</h1>
+    <h1 style="color:#C62222;font-size:24px;margin:0 0 24px">Nightcrawlers</h1>
     ${content}
     <p style="color:#98a2b3;font-size:12px;margin:32px 0 0;border-top:1px solid #eaecf0;padding-top:16px">
-      Night Crawlers Inc. · Lagos, Nigeria<br/>
+      Nightcrawlers Inc. · Lagos, Nigeria<br/>
       Questions? Email <a href="mailto:${process.env.SMTP_FROM}" style="color:#C62222">${process.env.SMTP_FROM}</a>
     </p>
   </div>
@@ -93,9 +93,9 @@ const button = (href, label) => `
 
 const sendVerificationEmail = async (to, firstName, code) => {
   await sendMail({
-    from: `"Night Crawlers" <${process.env.SMTP_FROM}>`,
+    from: `"Nightcrawlers" <${process.env.SMTP_FROM}>`,
     to,
-    subject: 'Verify your Night Crawlers account',
+    subject: 'Verify your Nightcrawlers account',
     html: wrap(`
       <p style="color:#222;font-size:16px;margin:0 0 8px">Hi ${firstName},</p>
       <p style="color:#667085;font-size:15px;margin:0 0 24px">
@@ -103,7 +103,7 @@ const sendVerificationEmail = async (to, firstName, code) => {
       </p>
       ${codeBlock(code)}
       <p style="color:#667085;font-size:13px;margin:0">
-        If you didn't create a Night Crawlers account, you can safely ignore this email.
+        If you didn't create a Nightcrawlers account, you can safely ignore this email.
       </p>
     `),
   });
@@ -111,9 +111,9 @@ const sendVerificationEmail = async (to, firstName, code) => {
 
 const sendWelcomeEmail = async (to, firstName) => {
   await sendMail({
-    from: `"Night Crawlers" <${process.env.SMTP_FROM}>`,
+    from: `"Nightcrawlers" <${process.env.SMTP_FROM}>`,
     to,
-    subject: 'Welcome to Night Crawlers 🎉',
+    subject: 'Welcome to Nightcrawlers 🎉',
     html: wrap(`
       <p style="color:#222;font-size:16px;margin:0 0 8px">Welcome, ${firstName}! 🎉</p>
       <p style="color:#667085;font-size:15px;margin:0 0 16px">
@@ -132,9 +132,9 @@ const sendWelcomeEmail = async (to, firstName) => {
 
 const sendPasswordResetEmail = async (to, firstName, code) => {
   await sendMail({
-    from: `"Night Crawlers" <${process.env.SMTP_FROM}>`,
+    from: `"Nightcrawlers" <${process.env.SMTP_FROM}>`,
     to,
-    subject: 'Reset your Night Crawlers password',
+    subject: 'Reset your Nightcrawlers password',
     html: wrap(`
       <p style="color:#222;font-size:16px;margin:0 0 8px">Hi ${firstName},</p>
       <p style="color:#667085;font-size:15px;margin:0 0 24px">
@@ -150,9 +150,9 @@ const sendPasswordResetEmail = async (to, firstName, code) => {
 
 const sendNewLocationEmail = async (to, firstName, code, ip) => {
   await sendMail({
-    from: `"Night Crawlers" <${process.env.SMTP_FROM}>`,
+    from: `"Nightcrawlers" <${process.env.SMTP_FROM}>`,
     to,
-    subject: 'New login detected on your Night Crawlers account',
+    subject: 'New login detected on your Nightcrawlers account',
     html: wrap(`
       <p style="color:#222;font-size:16px;margin:0 0 8px">Hi ${firstName},</p>
       <p style="color:#667085;font-size:15px;margin:0 0 24px">
@@ -169,9 +169,9 @@ const sendNewLocationEmail = async (to, firstName, code, ip) => {
 
 const sendPasswordChangedEmail = async (to, firstName) => {
   await sendMail({
-    from: `"Night Crawlers" <${process.env.SMTP_FROM}>`,
+    from: `"Nightcrawlers" <${process.env.SMTP_FROM}>`,
     to,
-    subject: 'Your Night Crawlers password was changed',
+    subject: 'Your Nightcrawlers password was changed',
     html: wrap(`
       <p style="color:#222;font-size:16px;margin:0 0 8px">Hi ${firstName},</p>
       <p style="color:#667085;font-size:15px;margin:0 0 24px">
@@ -192,9 +192,9 @@ const sendAccountUpdatedEmail = async (to, firstName, changes) => {
     .join('');
 
   await sendMail({
-    from: `"Night Crawlers" <${process.env.SMTP_FROM}>`,
+    from: `"Nightcrawlers" <${process.env.SMTP_FROM}>`,
     to,
-    subject: 'Your Night Crawlers account was updated',
+    subject: 'Your Nightcrawlers account was updated',
     html: wrap(`
       <p style="color:#222;font-size:16px;margin:0 0 8px">Hi ${firstName},</p>
       <p style="color:#667085;font-size:15px;margin:0 0 16px">
@@ -215,13 +215,13 @@ const sendAccountUpdatedEmail = async (to, firstName, changes) => {
 
 const sendVendorWelcomeEmail = async (to, firstName, businessType) => {
   await sendMail({
-    from: `"Night Crawlers" <${process.env.SMTP_FROM}>`,
+    from: `"Nightcrawlers" <${process.env.SMTP_FROM}>`,
     to,
-    subject: 'Welcome to Night Crawlers — Partner Application Received',
+    subject: 'Welcome to Nightcrawlers — Partner Application Received',
     html: wrap(`
       <p style="color:#222;font-size:16px;margin:0 0 8px">Hi ${firstName},</p>
       <p style="color:#667085;font-size:15px;margin:0 0 16px">
-        Hello there! Thanks for applying to become a <strong>${businessType}</strong> partner on Night Crawlers!
+        Hello there! Thanks for applying to become a <strong>${businessType}</strong> partner on Nightcrawlers!
         We've received your application and our team will review it within <strong>24–48 hours</strong>.
       </p>
       <div style="background:#f9fafb;border:1px solid #eaecf0;border-radius:8px;padding:16px 20px;margin:0 0 24px">
@@ -242,9 +242,9 @@ const sendVendorWelcomeEmail = async (to, firstName, businessType) => {
 
 const sendVendorApprovedEmail = async (to, firstName) => {
   await sendMail({
-    from: `"Night Crawlers" <${process.env.SMTP_FROM}>`,
+    from: `"Nightcrawlers" <${process.env.SMTP_FROM}>`,
     to,
-    subject: '🎉 Your Night Crawlers partner account is approved!',
+    subject: '🎉 Your Nightcrawlers partner account is approved!',
     html: wrap(`
       <p style="color:#222;font-size:16px;margin:0 0 8px">Great news, ${firstName}!</p>
       <p style="color:#667085;font-size:15px;margin:0 0 24px">
@@ -258,9 +258,9 @@ const sendVendorApprovedEmail = async (to, firstName) => {
 
 const sendVendorRejectedEmail = async (to, firstName, reason = '') => {
   await sendMail({
-    from: `"Night Crawlers" <${process.env.SMTP_FROM}>`,
+    from: `"Nightcrawlers" <${process.env.SMTP_FROM}>`,
     to,
-    subject: 'Update on your Night Crawlers partner application',
+    subject: 'Update on your Nightcrawlers partner application',
     html: wrap(`
       <p style="color:#222;font-size:16px;margin:0 0 8px">Hi ${firstName},</p>
       <p style="color:#667085;font-size:15px;margin:0 0 24px">
@@ -279,13 +279,13 @@ const sendVendorRejectedEmail = async (to, firstName, reason = '') => {
 
 const sendRiderWelcomeEmail = async (to, firstName, vehicleType) => {
   await sendMail({
-    from: `"Night Crawlers" <${process.env.SMTP_FROM}>`,
+    from: `"Nightcrawlers" <${process.env.SMTP_FROM}>`,
     to,
-    subject: 'Welcome to Night Crawlers — Rider Application Received',
+    subject: 'Welcome to Nightcrawlers — Rider Application Received',
     html: wrap(`
       <p style="color:#222;font-size:16px;margin:0 0 8px">Hi ${firstName},</p>
       <p style="color:#667085;font-size:15px;margin:0 0 16px">
-        Hello there! Thanks for applying to join the Night Crawlers rider fleet with your <strong>${vehicleType}</strong>!
+        Hello there! Thanks for applying to join the Nightcrawlers rider fleet with your <strong>${vehicleType}</strong>!
         Our team will review your application within <strong>24–48 hours</strong>.
       </p>
       <div style="background:#f9fafb;border:1px solid #eaecf0;border-radius:8px;padding:16px 20px;margin:0 0 24px">
@@ -306,9 +306,9 @@ const sendRiderWelcomeEmail = async (to, firstName, vehicleType) => {
 
 const sendRiderApprovedEmail = async (to, firstName) => {
   await sendMail({
-    from: `"Night Crawlers" <${process.env.SMTP_FROM}>`,
+    from: `"Nightcrawlers" <${process.env.SMTP_FROM}>`,
     to,
-    subject: '🎉 Your Night Crawlers rider account is approved!',
+    subject: '🎉 Your Nightcrawlers rider account is approved!',
     html: wrap(`
       <p style="color:#222;font-size:16px;margin:0 0 8px">Great news, ${firstName}!</p>
       <p style="color:#667085;font-size:15px;margin:0 0 24px">
@@ -321,9 +321,9 @@ const sendRiderApprovedEmail = async (to, firstName) => {
 
 const sendRiderRejectedEmail = async (to, firstName, reason = '') => {
   await sendMail({
-    from: `"Night Crawlers" <${process.env.SMTP_FROM}>`,
+    from: `"Nightcrawlers" <${process.env.SMTP_FROM}>`,
     to,
-    subject: 'Update on your Night Crawlers rider application',
+    subject: 'Update on your Nightcrawlers rider application',
     html: wrap(`
       <p style="color:#222;font-size:16px;margin:0 0 8px">Hi ${firstName},</p>
       <p style="color:#667085;font-size:15px;margin:0 0 24px">
@@ -347,7 +347,7 @@ const sendContactNotification = async ({ firstName, lastName, email, message, id
   const inbox = process.env.CONTACT_INBOX || process.env.SMTP_FROM;
   const name = `${firstName} ${lastName || ''}`.trim();
   await sendMail({
-    from: `"Night Crawlers Website" <${process.env.SMTP_FROM}>`,
+    from: `"Nightcrawlers Website" <${process.env.SMTP_FROM}>`,
     to: inbox,
     replyTo: `"${name.replace(/"/g, '')}" <${email}>`, // hit Reply to answer the customer directly
     subject: `New contact message from ${name}`,
@@ -364,7 +364,7 @@ const sendContactNotification = async ({ firstName, lastName, email, message, id
 /** To the person who wrote in: "we got your message". */
 const sendContactAcknowledgement = async (to, firstName) => {
   await sendMail({
-    from: `"Night Crawlers" <${process.env.SMTP_FROM}>`,
+    from: `"Nightcrawlers" <${process.env.SMTP_FROM}>`,
     to,
     subject: "We've received your message",
     html: wrap(`
@@ -381,9 +381,9 @@ const sendNewsletterWelcome = async (to, unsubscribeToken) => {
   const apiBase = (process.env.PUBLIC_API_URL || 'https://api.nightcrawlers.app').replace(/\/$/, '');
   const unsubscribeUrl = `${apiBase}/api/newsletter/unsubscribe?token=${unsubscribeToken}`;
   await sendMail({
-    from: `"Night Crawlers" <${process.env.SMTP_FROM}>`,
+    from: `"Nightcrawlers" <${process.env.SMTP_FROM}>`,
     to,
-    subject: "You're on the Night Crawlers list 🌙",
+    subject: "You're on the Nightcrawlers list 🌙",
     headers: { 'List-Unsubscribe': `<${unsubscribeUrl}>` },
     html: wrap(`
       <p style="color:#222;font-size:16px;margin:0 0 8px">You're in! 🎉</p>

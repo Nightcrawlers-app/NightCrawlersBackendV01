@@ -314,8 +314,8 @@ router.post('/reset-password', checkCodeLimit, async (req, res) => {
     if (!email || !code || !newPassword) {
       return res.status(400).json({ message: 'Email, code and new password are required.' });
     }
-    if (newPassword.length < 8) {
-      return res.status(400).json({ message: 'Password must be at least 8 characters.' });
+    if (newPassword.length < 6) {
+      return res.status(400).json({ message: 'Password must be at least 6 characters.' });
     }
  
     const user = await User.findOne({ email: email.toLowerCase() });

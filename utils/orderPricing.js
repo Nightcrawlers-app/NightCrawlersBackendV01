@@ -67,7 +67,7 @@ const priceOrder = async ({ store, items, promotionId, deliveryPoint = null, str
 
   const orderItems = lines.map((l) => {
     const m = byId.get(l.menuItemId);
-    return { menuItemId: m._id, name: m.name, price: m.price, quantity: l.quantity };
+    return { menuItemId: m._id, name: m.name, price: m.price, quantity: l.quantity, categories: m.categories || [] };
   });
 
   const subtotal = orderItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
@@ -88,7 +88,7 @@ const priceOrder = async ({ store, items, promotionId, deliveryPoint = null, str
   if (promotionId) {
     promo = mongoose.isValidObjectId(promotionId) ? await Promotion.findById(promotionId) : null;
     const result = promo
-      ? promo.quote({ store, subtotal, deliveryFee })
+      ? promo.quote({ store, subtotal, deliveryFee, items: orderItems })
       : { eligible: false, discount: 0, reason: 'That promo no longer exists.' };
     if (!result.eligible && strictPromo) {
       throw new PricingError(result.reason, { promotionInvalid: true });

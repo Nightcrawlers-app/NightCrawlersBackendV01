@@ -113,7 +113,7 @@ router.get('/newsletter/unsubscribe', async (req, res) => {
     .type('html')
     .send(
       '<div style="font-family:sans-serif;max-width:420px;margin:80px auto;text-align:center">' +
-        '<h2 style="color:#C62222">Night Crawlers</h2>' +
+        '<h2 style="color:#C62222">Nightcrawlers</h2>' +
         "<p>You've been unsubscribed. You won't get any more newsletter emails.</p></div>"
     );
 });

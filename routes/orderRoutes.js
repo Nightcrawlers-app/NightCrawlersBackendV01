@@ -4,8 +4,10 @@ const Order = require('../models/orderModel');
 const Store = require('../models/storeModel');
 const { priceOrder, PricingError } = require('../utils/orderPricing');
 const { phoneVerificationRequired } = require('../utils/settings');
+const { estimateDelivery, reachedAt } = require('../utils/orderEta');
+const { haversineKm } = require('../utils/deliveryFee');
 const { protect, requireRole, optionalAuth } = require('../middlewares/auth');
-const { geocodeAddress, readLatLng, toPoint } = require('../utils/geocoder');
+const { geocodeAddress, readLatLng, toPoint, fromPoint } = require('../utils/geocoder');
 
 // POST /api/orders/quote — { storeId, items: [{ menuItemId, quantity }], promotionId? }
 // The exact breakdown checkout should show. Same maths as placing the order.
@@ -112,6 +114,7 @@ router.post('/', optionalAuth, async (req, res) => {
       platformEarning: priced.platformEarning,
       paymentMethod,
       paymentStatus: paymentMethod === 'online' ? 'pending' : 'not_required',
+      statusHistory: [{ status: 'pending', at: new Date() }],
       status: 'pending',
       ...(pickup && { pickupCoordinates: pickup }),
       ...(priced.promo && {
@@ -198,6 +201,77 @@ router.get('/:id', protect, async (req, res) => {
   }
 });
 
+// GET /api/orders/:id/track — the customer's live view of their order:
+// status timeline, delivery time window, rider details once assigned.
+router.get('/:id/track', protect, async (req, res) => {
+  try {
+    if (!require('mongoose').isValidObjectId(req.params.id)) return res.status(404).json({ message: 'Order not found' });
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ message: 'Order not found' });
+
+    const { role, id } = req.user;
+    const allowed =
+      (role === 'customer' && String(order.customerId) === String(id)) ||
+      (role === 'vendor' && String(order.vendorId) === String(id)) ||
+      (role === 'rider' && String(order.riderId) === String(id)) ||
+      role === 'admin';
+    if (!allowed) return res.status(403).json({ message: 'Forbidden' });
+
+    const store = await Store.findById(order.storeId, 'name address businessType');
+    const eta = estimateDelivery(order, { businessType: store?.businessType });
+
+    // Rider details only once someone has accepted it — and only what the
+    // customer needs: first name, vehicle, phone, and how far away they are.
+    let rider = null;
+    if (order.riderId) {
+      const Rider = require('../models/riderModel');
+      const r = await Rider.findById(order.riderId, 'firstName vehicleType phoneNumber coordinates locationUpdatedAt');
+      if (r) {
+        const delivery = order.deliveryCoordinates?.coordinates?.length === 2 ? fromPoint(order.deliveryCoordinates) : null;
+        const riderPos = r.coordinates?.coordinates?.length === 2 ? fromPoint(r.coordinates) : null;
+        const fresh = r.locationUpdatedAt && Date.now() - new Date(r.locationUpdatedAt).getTime() < 10 * 60 * 1000;
+        rider = {
+          firstName: r.firstName,
+          vehicleType: r.vehicleType,
+          phoneNumber: ['accepted', 'picked_up', 'in_transit'].includes(order.status) ? r.phoneNumber : null,
+          distanceKm:
+            delivery && riderPos && fresh ? Math.round(haversineKm(riderPos, delivery) * 1.3 * 10) / 10 : null,
+        };
+      }
+    }
+
+    const at = (s) => reachedAt(order, s);
+    res.json({
+      id: String(order._id),
+      status: order.status,
+      paymentMethod: order.paymentMethod,
+      paymentStatus: order.paymentStatus,
+      placedAt: order.createdAt,
+      steps: {
+        placed: order.createdAt,
+        confirmed: at('preparing'),
+        ready: at('ready'),
+        pickedUp: at('picked_up'),
+        delivered: at('delivered'),
+        cancelled: at('cancelled'),
+      },
+      eta: eta && { earliest: eta.earliest, latest: eta.latest },
+      store: store && { name: store.name, address: store.address, businessType: store.businessType },
+      rider,
+      deliveryAddress: order.customerAddress,
+      items: order.items.map((i) => ({ name: i.name, quantity: i.quantity, price: i.price })),
+      subtotal: order.totalAmount,
+      deliveryFee: order.deliveryFee,
+      serviceFee: order.serviceFee,
+      discount: order.discountAmount || 0,
+      total: order.totalPaid ?? order.totalAmount + order.deliveryFee,
+      serverTime: new Date(),
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 // Old path, kept so existing clients don't break.
 router.get('/pending/list', protect, requireRole('rider'), listPendingForRider);
 
@@ -217,6 +291,7 @@ router.post('/:id/accept', protect, requireRole('rider'), async (req, res) => {
     order.riderId = req.user.id;
     order.status = 'accepted';
     order.acceptedAt = new Date();
+    order.statusHistory.push({ status: 'accepted', at: order.acceptedAt });
     await order.save();
 
     res.json(order);
@@ -266,6 +341,7 @@ router.patch('/:id/status', protect, async (req, res) => {
     order.status = status;
     if (status === 'picked_up') order.pickedUpAt = new Date();
     if (status === 'delivered') order.deliveredAt = new Date();
+    order.statusHistory.push({ status, at: new Date() });
 
     await order.save();
     res.json(order);

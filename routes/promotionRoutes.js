@@ -52,7 +52,7 @@ adminRouter.use(protect, requireRole('admin'));
 const MAX_IMAGE_BYTES = 800 * 1024;
 const EDITABLE = [
   'title', 'subtitle', 'badge', 'imageUrl', 'discountType', 'discountValue', 'maxDiscount',
-  'minOrderAmount', 'scope', 'businessType', 'storeIds', 'fundedBy', 'startsAt', 'endsAt',
+  'minOrderAmount', 'scope', 'businessType', 'storeIds', 'itemKeywords', 'fundedBy', 'startsAt', 'endsAt',
   'isActive', 'priority',
 ];
 
@@ -79,6 +79,10 @@ const readPromotion = (body, existing = {}) => {
   if (merged.scope === 'stores' && !(merged.storeIds || []).length) return [null, 'Choose at least one store.'];
   if (merged.startsAt && merged.endsAt && new Date(merged.endsAt) < new Date(merged.startsAt)) {
     return [null, 'End date must be after the start date.'];
+  }
+  if (data.itemKeywords !== undefined) {
+    if (!Array.isArray(data.itemKeywords)) return [null, 'Item keywords must be a list.'];
+    data.itemKeywords = [...new Set(data.itemKeywords.map((k) => String(k).trim().toLowerCase()).filter(Boolean))].slice(0, 10);
   }
   if (data.scope && data.scope !== 'category') data.businessType = null;
   if (data.scope && data.scope !== 'stores') data.storeIds = [];

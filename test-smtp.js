@@ -19,9 +19,9 @@ transporter.verify((err, success) => {
   console.log('✅ SMTP connection successful — sending test email...');
 
   transporter.sendMail({
-    from: `"Night Crawlers" <${process.env.SMTP_FROM}>`,
+    from: `"Nightcrawlers" <${process.env.SMTP_FROM}>`,
     to: process.env.SMTP_USER, // sends to yourself as a test
-    subject: 'Night Crawlers SMTP test',
+    subject: 'Nightcrawlers SMTP test',
     text: 'If you received this, your Hostinger SMTP is working correctly.',
   }, (err, info) => {
     if (err) {

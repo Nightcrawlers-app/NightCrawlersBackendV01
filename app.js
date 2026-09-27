@@ -124,7 +124,7 @@ app.use('/api', earningsRoutes);
 // ─── Admin dashboard ────────────────────────────────────────────────────────
 app.use('/api/admin', adminRoutes);
 
-app.get('/', (req, res) => res.json({ status: 'ok', message: 'Night Crawlers API' }));
+app.get('/', (req, res) => res.json({ status: 'ok', message: 'Nightcrawlers API' }));
 
 // GET /api/config — public settings the frontend needs (fees, feature switches)
 app.get('/api/config', (req, res) => res.json(require('./utils/settings').publicConfig()));

@@ -27,6 +27,11 @@ const PromotionSchema = new mongoose.Schema(
     businessType: { type: String, enum: [...BUSINESS_TYPES, null], default: null },
     storeIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Store' }],
 
+    // Optional: only these items get the discount, matched against each menu
+    // item's name and categories (case-insensitive, e.g. "pizza" matches
+    // "Pepperoni Pizza" or an item in the "Pizza" category). Empty = whole order.
+    itemKeywords: [{ type: String, trim: true, lowercase: true, maxlength: 40 }],
+
     // Who pays for the discount. Recorded on each order so earnings can be
     // settled correctly later (platform-funded vs vendor-funded).
     fundedBy: { type: String, enum: ['platform', 'vendor'], default: 'platform' },
@@ -57,12 +62,22 @@ PromotionSchema.methods.appliesToStore = function (store) {
   return (this.storeIds || []).some((id) => String(id) === String(store._id || store.id));
 };
 
+/** Does this menu line match the promo's item keywords? (always true when there are none) */
+PromotionSchema.methods.matchesItem = function (item) {
+  const keywords = this.itemKeywords || [];
+  if (!keywords.length) return true;
+  const text = [item.name, ...(item.categories || [])].join(' ').toLowerCase();
+  return keywords.some((k) => text.includes(k));
+};
+
 /**
  * Work out the discount for an order. Never trust a discount sent by the
  * browser — the backend always recalculates with this.
+ * `items` ([{ name, price, quantity, categories }]) is needed for promos that
+ * target specific items; without it such a promo can't be applied.
  * Returns { eligible, discount, reason }.
  */
-PromotionSchema.methods.quote = function ({ store, subtotal, deliveryFee = 0, now = new Date() }) {
+PromotionSchema.methods.quote = function ({ store, subtotal, deliveryFee = 0, items = null, now = new Date() }) {
   if (!this.isLive(now)) return { eligible: false, discount: 0, reason: 'This promo has ended.' };
   if (!this.appliesToStore(store)) {
     return { eligible: false, discount: 0, reason: "This promo isn't available at this store." };
@@ -77,12 +92,26 @@ PromotionSchema.methods.quote = function ({ store, subtotal, deliveryFee = 0, no
     };
   }
 
+  // Only the matching items count towards the discount (whole order if no keywords).
+  let eligibleSubtotal = subtotal;
+  if ((this.itemKeywords || []).length) {
+    const matching = (items || []).filter((i) => this.matchesItem(i));
+    eligibleSubtotal = matching.reduce((sum, i) => sum + i.price * i.quantity, 0);
+    if (!matching.length) {
+      return {
+        eligible: false,
+        discount: 0,
+        reason: `This promo is only for ${this.itemKeywords.join(', ')} items. Add one to your order to use it.`,
+      };
+    }
+  }
+
   let discount = 0;
   if (this.discountType === 'percent') {
-    discount = (subtotal * Math.min(this.discountValue, 100)) / 100;
+    discount = (eligibleSubtotal * Math.min(this.discountValue, 100)) / 100;
     if (this.maxDiscount) discount = Math.min(discount, this.maxDiscount);
   } else if (this.discountType === 'fixed') {
-    discount = Math.min(this.discountValue, subtotal);
+    discount = Math.min(this.discountValue, eligibleSubtotal);
   } else if (this.discountType === 'free_delivery') {
     discount = Math.max(0, deliveryFee);
   }

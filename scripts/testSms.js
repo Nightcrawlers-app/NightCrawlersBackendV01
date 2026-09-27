@@ -24,7 +24,7 @@ const { sendSms, normalizePhone, smsProvider } = require('../utils/smsService');
     console.log('Sender   :', process.env.TERMII_SENDER_ID || 'N-Alert (default)');
     console.log('Base URL :', process.env.TERMII_BASE_URL || 'https://api.ng.termii.com (default)');
     try {
-      await sendSms(to, 'NightCrawlers test message. If you got this, SMS works.');
+      await sendSms(to, 'Nightcrawlers test message. If you got this, SMS works.');
       console.log('\n✅ Termii accepted the message (reply above).');
     } catch (err) {
       console.log('\n❌', err.message);
@@ -46,7 +46,7 @@ const { sendSms, normalizePhone, smsProvider } = require('../utils/smsService');
   }
 
   try {
-    await sendSms(to, 'NightCrawlers test message. If you got this, SMS works.');
+    await sendSms(to, 'Nightcrawlers test message. If you got this, SMS works.');
     console.log('\n✅ Sendchamp accepted the message (full reply above).');
   } catch (err) {
     console.log('\n❌', err.message);

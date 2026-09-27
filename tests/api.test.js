@@ -1647,6 +1647,27 @@ describe('Promotions', () => {
     expect(res.body.promotionTitle).toBe('Half off');
   });
 
+  it('an item-targeted promo only discounts matching items', async () => {
+    const vendorToken = (await request(app).post('/api/vendors/login').send({ email: 'promo-vendor@test.com', password: 'password123' })).body.token;
+    const pizzaId = await addMenuItem(vendorToken, storeId, 'Pepperoni Pizza', 5000);
+    const promo = (await createPromo({ title: '20% off pizza', discountType: 'percent', discountValue: 20, itemKeywords: ['Pizza'] })).body;
+    expect(promo.itemKeywords).toEqual(['pizza']);
+
+    // Burgers only → promo refused, with a clear reason
+    const noPizza = await order({ promotionId: promo.id });
+    expect(noPizza.status).toBe(400);
+    expect(noPizza.body.message).toMatch(/only for pizza/);
+
+    // Burgers + a pizza → 20% of the pizza only (not the burgers)
+    const withPizza = await order({ promotionId: promo.id, items: [{ menuItemId: burgerId, quantity: 2 }, { menuItemId: pizzaId, quantity: 1 }] });
+    expect(withPizza.status).toBe(201);
+    expect(withPizza.body.discountAmount).toBe(1000);
+
+    // Only stores that sell pizza get the badge / show up for the promo
+    const stores = await request(app).get(`/api/stores?promotion=${promo.id}`);
+    expect(stores.body.map((s) => s.name)).toEqual(['Promo Store']);
+  });
+
   it('free delivery waives the delivery fee', async () => {
     const promo = (await createPromo({ title: 'Free delivery', discountType: 'free_delivery' })).body;
     const res = await order({ promotionId: promo.id });
@@ -1916,5 +1937,51 @@ describe('Vendor dashboard data', () => {
     const perStore = await request(app).get(`/api/vendors/${id}/stores/earnings`).set('Authorization', `Bearer ${token}`);
     expect(perStore.status).toBe(200);
     expect(perStore.body[0].storeName).toBe('Branch One');
+  });
+});
+
+describe('Order tracking', () => {
+  it('shows the customer each stage, an arrival window, and the rider once assigned', async () => {
+    process.env.REQUIRE_PHONE_VERIFICATION = 'false';
+    const vendor = await registerVendor({ email: 'track-vendor@test.com' });
+    const store = await request(app)
+      .post('/api/stores')
+      .set('Authorization', `Bearer ${vendor.body.token}`)
+      .send({ name: 'Track Kitchen', address: 'Wuse', imageUrl: 'https://x.com/i.jpg', lat: 9.0765, lng: 7.4803 });
+    const itemId = await addMenuItem(vendor.body.token, store.body._id, 'Suya', 3000);
+    const customer = await loginUser('tracker@test.com');
+
+    const order = (await request(app).post('/api/orders').set('Authorization', `Bearer ${customer}`).send({
+      storeId: store.body._id, customerName: 'T', customerPhone: '08012345678', customerAddress: 'Garki',
+      customerLatitude: 9.0333, customerLongitude: 7.4833, items: [{ menuItemId: itemId, quantity: 1 }],
+    })).body;
+    const track = () => request(app).get(`/api/orders/${order._id}/track`).set('Authorization', `Bearer ${customer}`);
+
+    let t = await track();
+    expect(t.status).toBe(200);
+    expect(t.body.status).toBe('pending');
+    expect(new Date(t.body.eta.latest) > new Date(t.body.eta.earliest)).toBe(true);
+    expect(t.body.rider).toBeNull();
+
+    const setStatus = (status) =>
+      request(app).patch(`/api/orders/${order._id}/status`).set('Authorization', `Bearer ${vendor.body.token}`).send({ status });
+    await setStatus('preparing');
+    await setStatus('ready');
+
+    const rider = await registerRider({ email: 'track-rider@test.com', phoneNumber: '08011112222' });
+    await request(app).post(`/api/orders/${order._id}/accept`).set('Authorization', `Bearer ${rider.body.token}`);
+
+    t = await track();
+    expect(t.body.status).toBe('accepted');
+    expect(t.body.steps.confirmed).toBeTruthy();
+    expect(t.body.steps.ready).toBeTruthy();
+    expect(t.body.rider.firstName).toBeDefined();
+    expect(t.body.rider.phoneNumber).toBe('08011112222');
+
+    // Someone else's order is off limits
+    const other = await loginUser('nosy@test.com');
+    const blocked = await request(app).get(`/api/orders/${order._id}/track`).set('Authorization', `Bearer ${other}`);
+    expect(blocked.status).toBe(403);
+    process.env.REQUIRE_PHONE_VERIFICATION = 'true';
   });
 });
