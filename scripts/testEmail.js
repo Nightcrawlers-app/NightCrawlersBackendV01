@@ -19,8 +19,8 @@ const mailer = require('../utils/mailer');
 
   const steps = [
     ['contact → support inbox', () =>
-      mailer.sendContactNotification({ firstName: 'Test', lastName: 'User', email: to, message: 'Test message', id: 'test' })],
-    ['contact acknowledgement', () => mailer.sendContactAcknowledgement(to, 'Test')],
+      mailer.sendContactNotification({ firstName: 'Ada', lastName: 'Obi', email: to, message: 'Hello, I placed an order last night and wanted to ask whether you deliver to Gwarinpa after midnight. Thank you!', id: 'test' })],
+    ['contact acknowledgement', () => mailer.sendContactAcknowledgement(to, 'Ada')],
     ['newsletter welcome', () => mailer.sendNewsletterWelcome(to, 'test-token')],
   ];
   for (const [name, run] of steps) {

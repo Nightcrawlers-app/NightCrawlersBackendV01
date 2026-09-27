@@ -346,7 +346,7 @@ const sendRiderRejectedEmail = async (to, firstName, reason = '') => {
 const sendContactNotification = async ({ firstName, lastName, email, message, id }) => {
   const inbox = process.env.CONTACT_INBOX || process.env.SMTP_FROM;
   const name = `${firstName} ${lastName || ''}`.trim();
-  await sendMail({
+  const mail = {
     from: `"Nightcrawlers Website" <${process.env.SMTP_FROM}>`,
     to: inbox,
     replyTo: `"${name.replace(/"/g, '')}" <${email}>`, // hit Reply to answer the customer directly
@@ -358,7 +358,19 @@ const sendContactNotification = async ({ firstName, lastName, email, message, id
       <div style="background:#f9fafb;border:1px solid #eaecf0;border-radius:8px;padding:16px;color:#344054;font-size:15px;white-space:pre-wrap">${escapeHtml(message)}</div>
       <p style="color:#667085;font-size:13px;margin:16px 0 0">Reply to this email to respond to ${escapeHtml(firstName)}.</p>
     `),
-  });
+  };
+  try {
+    await sendMail(mail);
+  } catch (err) {
+    // Hostinger's outgoing spam filter sometimes rejects mail whose Reply-To
+    // points at an outside address (554 5.7.1). The message is already saved
+    // in the database; retry without Reply-To so the team still gets it — the
+    // customer's email address is in the body either way.
+    if (!/5\.7\.1|554/.test(err.message)) throw err;
+    delete mail.replyTo;
+    mail.subject = `New contact message from ${name} (reply to ${email})`;
+    await sendMail(mail);
+  }
 };
 
 /** To the person who wrote in: "we got your message". */
