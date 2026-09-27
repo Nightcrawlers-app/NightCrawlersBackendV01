@@ -1897,3 +1897,24 @@ describe('Nigerian-time day boundaries', () => {
     expect(startOfToday(now).toISOString()).toBe('2026-06-14T23:00:00.000Z');
   });
 });
+
+describe('Vendor dashboard data', () => {
+  it('GET /api/vendors/:id/stores and /stores/earnings work for a new vendor', async () => {
+    const reg = await registerVendor({ email: 'dash-vendor@test.com' });
+    const token = reg.body.token;
+    const id = reg.body.vendor._id;
+    await request(app)
+      .post('/api/stores')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: 'Branch One', address: 'Wuse', imageUrl: 'https://x.com/i.jpg', categories: ['Rice', 'Grills'] });
+
+    const stores = await request(app).get(`/api/vendors/${id}/stores`).set('Authorization', `Bearer ${token}`);
+    expect(stores.status).toBe(200);
+    expect(stores.body.map((s) => s.name)).toEqual(['Branch One']);
+
+    // Used to crash (500) on a wrong require path, which blanked the whole dashboard
+    const perStore = await request(app).get(`/api/vendors/${id}/stores/earnings`).set('Authorization', `Bearer ${token}`);
+    expect(perStore.status).toBe(200);
+    expect(perStore.body[0].storeName).toBe('Branch One');
+  });
+});

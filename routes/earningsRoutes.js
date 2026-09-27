@@ -76,7 +76,7 @@ router.get('/vendors/:id/stores/earnings', protect, async (req, res) => {
     }
 
     const stores = await Store.find({ vendorId: req.params.id });
-    const vendor = require('../models/Vendor');
+    const vendor = require('../models/vendorModel');
     const vendorDoc = await vendor.findById(req.params.id);
     const vendorName = vendorDoc ? `${vendorDoc.firstName} ${vendorDoc.lastName}` : 'Unknown';
 
@@ -113,7 +113,7 @@ router.get('/stores/:id/earnings', protect, async (req, res) => {
       return res.status(403).json({ message: 'Forbidden' });
     }
 
-    const Vendor = require('../models/Vendor');
+    const Vendor = require('../models/vendorModel');
     const vendorDoc = await Vendor.findById(store.vendorId);
     const e = await earningsAgg({ storeId: store._id }, 'totalAmount');
 
