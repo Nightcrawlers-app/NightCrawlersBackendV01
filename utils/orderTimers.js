@@ -152,10 +152,10 @@ const notifyCustomerCancelled = async (order, reason) => {
  * online orders and (optionally) tells the customer.
  * Returns the cancelled order, or null if it had already moved on.
  */
-const cancelOrder = async (orderId, { fromStatuses, by, reason, notify = true }) => {
+const cancelOrder = async (orderId, { fromStatuses, by, reason, notify = true, extraFilter = {} }) => {
   const now = new Date();
   const order = await Order.findOneAndUpdate(
-    { _id: orderId, status: { $in: fromStatuses } },
+    { _id: orderId, status: { $in: fromStatuses }, ...extraFilter },
     {
       $set: { status: 'cancelled', cancelledAt: now, cancelledBy: by, cancelReason: reason.slice(0, 300), trip: null },
       $push: { statusHistory: { status: 'cancelled', at: now } },
@@ -292,6 +292,8 @@ const runOrderTimers = async () => {
     await cancelUnaccepted(now);
     await warnRiders(now);
     await releaseLateRiders(now);
+    // Running-late alerts (prep, no rider, stalled delivery) — utils/orderAlerts.js
+    await require('./orderAlerts').runOrderAlerts(now);
   } catch (err) {
     console.error('Order timers failed (will try again next minute):', err.message);
   } finally {

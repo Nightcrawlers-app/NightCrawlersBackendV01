@@ -176,3 +176,52 @@ describe('refunds', () => {
     expect((await Order.findOne({ paystackReference: 'NC-4' })).refundStatus).toBe('processed');
   });
 });
+
+// ─── Running-late alerts (utils/orderAlerts.js) ─────────────────────────────
+describe('alerts', () => {
+  const Store = require('../models/storeModel');
+  const { customerView } = require('../utils/orderAlerts');
+  const types = async (id) => (await Order.findById(id)).alerts.map((a) => a.type).sort();
+  const history = (...steps) => steps.map(([status, minsAgo]) => ({ status, at: ago(minsAgo) }));
+
+  afterEach(() => Store.deleteMany({}));
+
+  test('prep: late after usual time + 10, team alerted after + 30, each once', async () => {
+    const store = await Store.collection.insertOne({ name: 'Test Kitchen', businessType: 'Food' });
+    const o = await makeOrder({ storeId: store.insertedId, status: 'preparing', statusHistory: history(['pending', 45], ['preparing', 32]) });
+    await runOrderTimers();
+    expect(await types(o._id)).toEqual(['prep_late']); // 32 ≥ 20+10, < 20+30
+    await Order.updateOne({ _id: o._id }, { $set: { 'statusHistory.1.at': ago(55) } });
+    await runOrderTimers();
+    await runOrderTimers();
+    expect(await types(o._id)).toEqual(['prep_late', 'prep_very_late']);
+    expect(customerView(await Order.findById(o._id)).prepLate).toBe(true);
+  });
+
+  test('no rider: ping at 5, team at 10, customer may cancel at 20', async () => {
+    const o = await makeOrder({ status: 'ready', statusHistory: history(['ready', 6]) });
+    await runOrderTimers();
+    expect(await types(o._id)).toEqual(['no_rider']);
+    await Order.updateOne({ _id: o._id }, { $set: { 'statusHistory.0.at': ago(21) } });
+    await runOrderTimers();
+    expect(await types(o._id)).toEqual(['no_rider', 'no_rider_admin', 'no_rider_customer']);
+    expect(customerView(await Order.findById(o._id)).canCancel).toBe(true);
+  });
+
+  test('delivery stalled: no rider location for 10+ min → alert, order untouched', async () => {
+    const rider = await makeRider({ locationUpdatedAt: ago(15), coordinates: STORE });
+    const o = await makeOrder({ status: 'picked_up', riderId: rider._id, statusHistory: history(['picked_up', 14]) });
+    await runOrderTimers();
+    const after = await Order.findById(o._id);
+    expect(after.alerts.map((a) => a.type)).toEqual(['delivery_stalled']);
+    expect(after.status).toBe('picked_up');
+    expect(String(after.riderId)).toBe(String(rider._id));
+  });
+
+  test('delivery on time with a live rider → no alert', async () => {
+    const rider = await makeRider({ locationUpdatedAt: new Date(), coordinates: STORE });
+    const o = await makeOrder({ status: 'in_transit', riderId: rider._id, statusHistory: history(['picked_up', 8]) });
+    await runOrderTimers();
+    expect(await types(o._id)).toEqual([]);
+  });
+});

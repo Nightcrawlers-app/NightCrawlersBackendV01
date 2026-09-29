@@ -460,7 +460,25 @@ const sendOrderCancelledEmail = async (to, firstName, { storeName, reason, refun
   });
 };
 
+/** Operations alert to the team (late prep, no rider, stalled delivery). */
+const sendAdminAlertEmail = async ({ subject, lines, orderId }) => {
+  const to = process.env.ADMIN_ALERT_EMAIL || process.env.CONTACT_INBOX || process.env.SMTP_FROM;
+  const frontend = (process.env.FRONTEND_URL || 'http://localhost:5173').split(',')[0].trim().replace(/\/$/, '');
+  await sendMail({
+    from: `"Nightcrawlers alerts" <${process.env.SMTP_FROM}>`,
+    to,
+    subject: `⚠️ ${subject}`,
+    html: wrap(`
+      <p style="color:#222;font-size:16px;font-weight:700;margin:0 0 12px">${escapeHtml(subject)}</p>
+      ${lines.map((l) => `<p style="color:#444;font-size:14px;margin:0 0 6px">${escapeHtml(l)}</p>`).join('')}
+      <p style="color:#98A2B3;font-size:12px;margin:16px 0 0">Order ${escapeHtml(String(orderId))}</p>
+      ${button(`${frontend}/admin-dashboard`, 'Open alerts')}
+    `),
+  });
+};
+
 module.exports = {
+  sendAdminAlertEmail,
   sendOrderCancelledEmail,
   sendPersonalCodeEmail,
   verifyMailer,

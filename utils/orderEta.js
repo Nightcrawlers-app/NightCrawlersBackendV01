@@ -92,4 +92,4 @@ const estimateDelivery = (order, { businessType = 'Food', now = new Date() } = {
   return { earliest, latest: new Date(earliest.getTime() + s.windowMin * MIN) };
 };
 
-module.exports = { estimateDelivery, reachedAt };
+module.exports = { estimateDelivery, reachedAt, PREP_MINUTES };

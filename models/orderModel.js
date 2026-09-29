@@ -128,6 +128,26 @@ const OrderSchema = new mongoose.Schema(
       },
     ],
 
+    // ── Alerts: something is running late (utils/orderAlerts.js) ───────────
+    // Each type is raised at most once per order. Admin marks them handled.
+    //   prep_late          past the usual prep time + grace → vendor nudged, customer told
+    //   prep_very_late     much later still → admin alerted
+    //   no_rider           nobody took the ready order → nearby online riders pinged
+    //   no_rider_admin     still nobody → admin alerted
+    //   no_rider_customer  still nobody → customer may cancel for a full refund
+    //   delivery_stalled   picked up, but no rider location for a while or well
+    //                      past the expected arrival → admin alerted (never reassigned)
+    alerts: [
+      {
+        _id: false,
+        type: { type: String },
+        at: { type: Date, default: Date.now },
+        message: { type: String, default: '' },
+        resolvedAt: { type: Date, default: null },
+        resolvedNote: { type: String, default: '' },
+      },
+    ],
+
     // ── Cancellation ───────────────────────────────────────────────────────
     cancelledAt: { type: Date, default: null },
     cancelledBy: { type: String, enum: ['customer', 'vendor', 'admin', 'system', null], default: null },

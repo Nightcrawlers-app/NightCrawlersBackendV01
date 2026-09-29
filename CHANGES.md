@@ -156,3 +156,23 @@ Then run `docker compose up -d --force-recreate nginx`.
 
 ## Fix: 2 failing tests in `tests/rewards.test.js`
 `promotionModel.js` looked up the Order and PersonalCode models by name with `mongoose.model('Order')`. That only works if something else has already loaded them. In the app something always has, but the unit test loads only the promo and pricing code, so the lookup failed. The models are now loaded directly with `require`, which works either way. The app's behaviour doesn't change.
+
+---
+
+# Running-late alerts (fifth round)
+New `utils/orderAlerts.js`, run every minute with the order timers. These never cancel or reassign anything automatically; they tell the right person. Each alert is raised once per order.
+
+- **Stage 2: food taking too long.** 10 minutes past the usual prep time for the store's category, the vendor and customer each get an SMS and the tracking page says it's running late. 30 minutes past, the team is alerted.
+- **Stage 3: nobody taking a ready order.**
+  - At 5 minutes, up to 10 free online riders within 10 km get an SMS.
+  - At 10 minutes, the team is alerted.
+  - At 20 minutes, the customer is told they can cancel for a full refund.
+  - If they do cancel, the vendor gets an SMS and a team alert flags that the vendor made the food, so you can decide whether to pay them.
+- **Stage 5: delivery stalled after pickup.** If there's been no rider location for 10 minutes, or the order is 20 minutes past its expected arrival, the team is alerted with the rider's and customer's numbers and a map link to the rider's last position. The order is never reassigned.
+- **Team alerts** go by email to ADMIN_ALERT_EMAIL (or CONTACT_INBOX), and by SMS to ADMIN_ALERT_PHONE if it's set.
+- **New endpoints:**
+  - `POST /api/orders/:id/cancel`: the customer cancels, either before the store accepts or once they've been offered it after a long rider search. It's atomic and refunds paid orders.
+  - `GET /api/admin/alerts` and `POST /api/admin/alerts/:orderId/resolve`.
+- The tracking payload now includes `delays`: prepLate, findingRider, deliveryDelayed, canCancel.
+- `cancelOrder()` accepts an `extraFilter` option.
+- New alert tests in `tests/orderTimers.test.js`.

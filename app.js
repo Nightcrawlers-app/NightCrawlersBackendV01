@@ -27,6 +27,7 @@ const contactRoutes = require('./routes/contactRoutes');
 const promotionRoutes = require('./routes/promotionRoutes');
 const placementRoutes = require('./routes/placementRoutes');
 const refundRoutes = require('./routes/refundRoutes');
+const alertRoutes = require('./routes/alertRoutes');
 const { router: paymentRoutes } = require('./routes/paymentRoutes');
 const swaggerUi = require("swagger-ui-express");
 const swaggerFile = require("./swagger-output.json");
@@ -128,6 +129,8 @@ app.use('/api/admin/placements', placementRoutes.adminRouter);   // admin CRUD
 
 // ─── Refunds that need a person (failed / stuck) ────────────────────────────
 app.use('/api/admin/refunds', refundRoutes);
+// ─── Orders running late (prep, no rider, stalled delivery) ─────────────────
+app.use('/api/admin/alerts', alertRoutes);
 
 // ─── Marketing site ─────────────────────────────────────────────────────────
 app.use('/api', contactRoutes);           // POST /api/contact, POST /api/newsletter

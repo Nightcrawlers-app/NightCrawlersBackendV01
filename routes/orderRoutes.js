@@ -373,6 +373,8 @@ router.get('/:id/track', protect, async (req, res) => {
       refundStatus: order.refundStatus || 'none',
       refundAmount: order.refundAmount || 0,
       acceptDeadline: order.status === 'pending' ? order.acceptDeadline : null,
+      // Running late / can cancel (utils/orderAlerts.js)
+      delays: require('../utils/orderAlerts').customerView(order),
       steps: {
         placed: order.createdAt,
         confirmed: at('preparing'),
@@ -418,6 +420,65 @@ router.get('/:id/track', protect, async (req, res) => {
 
 // Old path, kept so existing clients don't break.
 router.get('/pending/list', protect, requireRole('rider'), listPendingForRider);
+
+// POST /api/orders/:id/cancel — the customer cancels their own order.
+// Allowed before the store accepts it, or after a long wait for a rider
+// (utils/orderAlerts.js offers it). Paid orders are refunded in full.
+router.post('/:id/cancel', protect, requireRole('customer'), async (req, res) => {
+  try {
+    if (!require('mongoose').isValidObjectId(req.params.id)) return res.status(404).json({ message: 'Order not found' });
+    const order = await Order.findById(req.params.id);
+    if (!order || String(order.customerId) !== String(req.user.id)) return res.status(404).json({ message: 'Order not found' });
+
+    const { customerView, raiseAlert, notifyTeam } = require('../utils/orderAlerts');
+    if (!customerView(order).canCancel) {
+      return res.status(400).json({
+        message:
+          order.status === 'cancelled'
+            ? 'This order is already cancelled.'
+            : "This order can't be cancelled now — the store is already working on it. Contact us if something's wrong.",
+      });
+    }
+
+    const { cancelOrder } = require('../utils/orderTimers');
+    const afterReady = order.status === 'ready';
+    const cancelled = await cancelOrder(order._id, {
+      fromStatuses: [order.status],
+      extraFilter: afterReady ? { riderId: null } : {},
+      by: 'customer',
+      reason: afterReady ? 'You cancelled because no rider was available.' : 'You cancelled the order.',
+      notify: false, // they did it themselves; the screen tells them about the refund
+    });
+    if (!cancelled) {
+      return res.status(409).json({ message: 'Your order just moved on (the store accepted it or a rider took it), so it can no longer be cancelled here.' });
+    }
+
+    // Food was already made: the vendor shouldn't lose out. Flag it for the team.
+    if (afterReady) {
+      const Vendor = require('../models/vendorModel');
+      const vendor = await Vendor.findById(cancelled.vendorId, 'phoneNumber');
+      if (process.env.NODE_ENV !== 'test' && vendor?.phoneNumber) {
+        require('../utils/smsService')
+          .sendSms(vendor.phoneNumber, `Nightcrawlers: the ${cancelled.storeName} order for ${cancelled.customerName} was cancelled because no rider was found. Our team will contact you about the food you prepared.`)
+          .catch(() => {});
+      }
+      if (await raiseAlert(cancelled._id, 'cancelled_after_ready', 'Customer cancelled after food was ready (no rider). Vendor may need paying.')) {
+        notifyTeam({
+          subject: `Order cancelled after the food was ready: ${cancelled.storeName}`,
+          lines: [
+            'No rider took it, so the customer cancelled and was refunded.',
+            `The vendor made the food (₦${cancelled.totalAmount.toLocaleString()}). Decide whether to pay them.`,
+          ],
+          orderId: cancelled._id,
+        }).catch(() => {});
+      }
+    }
+    const fresh = await Order.findById(cancelled._id);
+    res.json(fresh);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
 
 // POST /api/orders/:id/accept — rider accepts an order
 router.post('/:id/accept', protect, requireRole('rider'), async (req, res) => {
