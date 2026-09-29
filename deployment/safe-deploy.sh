@@ -76,9 +76,19 @@ docker rm "nightcrawlers_${SERVICE}_new" > /dev/null
 # Now do the real swap via compose (this recreates with the pulled image)
 docker compose up -d --no-deps --force-recreate "$SERVICE"
 
-# Final confirmation health check on the real container/port
-sleep 5
-if ! curl -sf "$HEALTH_URL" > /dev/null 2>&1; then
+# nginx: pick up the new container's address straight away. (The new nginx
+# config re-checks every 10s anyway; this also covers an older config on the
+# server that only looked the address up once.)
+docker exec nightcrawlers_nginx nginx -s reload > /dev/null 2>&1 || docker compose restart nginx > /dev/null 2>&1 || true
+
+# Final confirmation health check on the real container/port (a few tries:
+# the API needs a moment to connect to MongoDB)
+PROD_OK=false
+for i in 1 2 3 4 5 6; do
+  sleep 5
+  if curl -sf "$HEALTH_URL" > /dev/null 2>&1; then PROD_OK=true; break; fi
+done
+if [ "$PROD_OK" = false ]; then
   echo "❌ Production swap failed health check after compose recreate!"
   echo "   Attempting automatic rollback to previous image..."
   if [ "$OLD_IMAGE_ID" != "none" ] && [ -n "$OLD_IMAGE_ID" ]; then

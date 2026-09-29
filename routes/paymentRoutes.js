@@ -37,7 +37,12 @@ const summary = (order) => ({
   storeName: order.storeName,
 });
 
-// POST /api/payments/paystack/initialize — { orderId } → { authorizationUrl }
+// POST /api/payments/paystack/initialize — { orderId, channel? } → { authorizationUrl, accessCode, reference }
+//   channel 'card' → card only, for the in-app card popup (the frontend opens
+//                    Paystack's secure popup with accessCode; card details go
+//                    straight to Paystack, never through our servers)
+//   otherwise      → every method Paystack offers (card, transfer, USSD…) on
+//                    Paystack's own page (redirect to authorizationUrl)
 // Also used to retry a payment that failed or was abandoned.
 router.post('/paystack/initialize', optionalAuth, async (req, res) => {
   try {
@@ -59,18 +64,20 @@ router.post('/paystack/initialize', optionalAuth, async (req, res) => {
     // A fresh reference each attempt — Paystack rejects re-using one.
     const reference = `NC-${order._id}-${Date.now()}`;
 
-    const { authorizationUrl } = await initializeTransaction({
+    const cardOnly = req.body.channel === 'card';
+    const { authorizationUrl, accessCode } = await initializeTransaction({
       email: customer.email,
       amountNaira: order.totalPaid,
       reference,
       callbackUrl: `${frontend}/payment/callback`,
       metadata: { orderId: String(order._id), store: order.storeName },
+      ...(cardOnly && { channels: ['card'] }),
     });
 
     order.paystackReference = reference;
     order.paymentStatus = 'pending';
     await order.save();
-    res.json({ authorizationUrl, reference });
+    res.json({ authorizationUrl, accessCode, reference });
   } catch (err) {
     console.error('Payment initialize failed:', err.message);
     res.status(502).json({ message: "Couldn't start the payment. Please try again." });

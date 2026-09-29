@@ -1,4 +1,5 @@
 require('dotenv').config();
+require('./utils/asyncErrors'); // async route errors → error handler (must be first)
 const express = require('express');
 const cors = require('cors');
 
@@ -24,6 +25,7 @@ const adminKycRoutes = require('./routes/adminKycRoutes');
 const geoRoutes = require('./routes/geoRoutes');
 const contactRoutes = require('./routes/contactRoutes');
 const promotionRoutes = require('./routes/promotionRoutes');
+const placementRoutes = require('./routes/placementRoutes');
 const { router: paymentRoutes } = require('./routes/paymentRoutes');
 const swaggerUi = require("swagger-ui-express");
 const swaggerFile = require("./swagger-output.json");
@@ -74,6 +76,17 @@ app.use(
 
 connectDB();
 
+// While the database is fully disconnected, answer API calls straight away
+// with 503 "try again" instead of making the customer wait 10 seconds for a
+// generic error. (While it's reconnecting, requests wait briefly as usual.)
+// /api/config needs no database, so it's left alone.
+app.use('/api', (req, res, next) => {
+  const mongoose = require('mongoose');
+  if (mongoose.connection.readyState !== 0 || req.path === '/config' || process.env.NODE_ENV === 'test') return next();
+  res.set('Retry-After', '10');
+  res.status(503).json({ message: 'We’re having trouble reaching our database. Please try again in a few seconds.', retryAfter: 10 });
+});
+
 
 app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(swaggerFile));
 
@@ -108,6 +121,10 @@ app.use('/api/payments', paymentRoutes);
 app.use('/api/promotions', promotionRoutes.publicRouter);        // live promos, quotes
 app.use('/api/admin/promotions', promotionRoutes.adminRouter);   // admin CRUD
 
+// ─── Sponsored tiles ("Popular on Nightcrawlers" ads) ───────────────────────
+app.use('/api/placements', placementRoutes.publicRouter);        // live ads per tab, click counts
+app.use('/api/admin/placements', placementRoutes.adminRouter);   // admin CRUD
+
 // ─── Marketing site ─────────────────────────────────────────────────────────
 app.use('/api', contactRoutes);           // POST /api/contact, POST /api/newsletter
 
@@ -129,8 +146,19 @@ app.get('/', (req, res) => res.json({ status: 'ok', message: 'Nightcrawlers API'
 // GET /api/config — public settings the frontend needs (fees, feature switches)
 app.get('/api/config', (req, res) => res.json(require('./utils/settings').publicConfig()));
 
+// GET /health — is the API up, and can it reach the database?
+// 503 while MongoDB is disconnected, so monitoring (and you) can tell
+// "server down" apart from "database down".
 app.get("/health", (req, res) => {
-  res.json({ status: 'ok', message: 'API is healthy' });
+  const states = ['disconnected', 'connected', 'connecting', 'disconnecting'];
+  const state = require('mongoose').connection.readyState;
+  const ok = state === 1;
+  res.status(ok ? 200 : 503).json({
+    status: ok ? 'ok' : 'degraded',
+    database: states[state] || 'unknown',
+    uptimeSeconds: Math.round(process.uptime()),
+    memoryMB: Math.round(process.memoryUsage().rss / 1024 / 1024),
+  });
 });
 
 app.get("/api-docs-test", (req, res) => {
@@ -142,6 +170,18 @@ app.use((req, res) => res.status(404).json({ message: 'Not found' }));
 
 // Global error handler
 app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  // Database unreachable (Atlas blip, IP not allowed, network drop): tell the
+  // app to try again shortly, rather than a generic 500. The frontend retries
+  // 503s on page loads automatically.
+  const dbDown =
+    /^Mongo(ServerSelection|Network|NotConnected)Error$/.test(err?.name) ||
+    /buffering timed out|Client must be connected|connection .* closed/i.test(err?.message || '');
+  if (dbDown) {
+    console.error(`[${new Date().toISOString()}] Database unavailable for ${req.method} ${req.originalUrl}: ${err.message}`);
+    res.set('Retry-After', '10');
+    return res.status(503).json({ message: 'We’re having trouble reaching our database. Please try again in a few seconds.', retryAfter: 10 });
+  }
   console.error(err);
   res.status(500).json({ message: 'Internal server error' });
 });

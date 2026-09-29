@@ -1,6 +1,17 @@
+# Keep each container's log to 3 × 10 MB. Without this, Docker logs grow
+# forever and can fill a small VM's disk, which takes everything down.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   # ── API ─────────────────────────────────────────────────────────────────────
   api:
+    logging: *default-logging
+    # Let open requests finish on deploy (server.js handles SIGTERM).
+    stop_grace_period: 15s
     build:
       context: .
       dockerfile: Dockerfile
@@ -39,6 +50,7 @@ services:
   # ── MongoDB (local dev / self-hosted) ────────────────────────────────────────
   # Comment this out if you're using MongoDB Atlas
   mongo:
+    logging: *default-logging
     image: mongo:7
     container_name: nightcrawlers_mongo
     restart: unless-stopped
@@ -57,6 +69,7 @@ services:
 
   # ── Nginx reverse proxy ──────────────────────────────────────────────────────
   nginx:
+    logging: *default-logging
     image: nginx:alpine
     container_name: nightcrawlers_nginx
     restart: unless-stopped

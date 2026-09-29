@@ -71,7 +71,7 @@ const wrap = (content) => `
     <h1 style="color:#E00B0B;font-size:24px;margin:0 0 24px">Nightcrawlers</h1>
     ${content}
     <p style="color:#98a2b3;font-size:12px;margin:32px 0 0;border-top:1px solid #eaecf0;padding-top:16px">
-      Nightcrawlers Limited · Lagos, Nigeria<br/>
+      Nightcrawlers Limited · Abuja, Nigeria<br/>
       Questions? Email <a href="mailto:${process.env.SMTP_FROM}" style="color:#E00B0B">${process.env.SMTP_FROM}</a>
     </p>
   </div>
@@ -410,7 +410,34 @@ const sendNewsletterWelcome = async (to, unsubscribeToken) => {
   });
 };
 
+/**
+ * A customer's own promo code (personal-code campaigns).
+ *   offer   — e.g. "20% off your next order (up to ₦2,000)"
+ *   expires — Date or null
+ */
+const sendPersonalCodeEmail = async (to, firstName, { code, title, offer, expires }) => {
+  const frontend = (process.env.FRONTEND_URL || 'http://localhost:5173').split(',')[0].trim().replace(/\/$/, '');
+  const until = expires
+    ? new Date(expires).toLocaleDateString('en-NG', { day: 'numeric', month: 'long', timeZone: 'Africa/Lagos' })
+    : null;
+  await sendMail({
+    from: `"Nightcrawlers" <${process.env.SMTP_FROM}>`,
+    to,
+    subject: `${escapeHtml(firstName)}, here's a code just for you 🌙`,
+    html: wrap(`
+      <p style="color:#222;font-size:16px;margin:0 0 8px">Hi ${escapeHtml(firstName)},</p>
+      <p style="color:#667085;font-size:15px;margin:0 0 8px"><strong style="color:#222">${escapeHtml(title)}</strong></p>
+      <p style="color:#667085;font-size:15px;margin:0 0 24px">
+        ${escapeHtml(offer)}. Enter this code at checkout. It's linked to your account, so it only works for you${until ? `, until ${until}` : ''}.
+      </p>
+      ${codeBlock(escapeHtml(code))}
+      ${button(`${frontend}/explore`, 'Order now')}
+    `),
+  });
+};
+
 module.exports = {
+  sendPersonalCodeEmail,
   verifyMailer,
   sendContactNotification,
   sendContactAcknowledgement,

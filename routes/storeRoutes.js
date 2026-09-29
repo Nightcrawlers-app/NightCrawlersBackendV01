@@ -32,7 +32,7 @@ const storesWithMatchingItems = async (promo) => {
 
 const withPromotions = async (stores) => {
   const Promotion = require('../models/promotionModel');
-  const live = await Promotion.findLive();
+  const live = await Promotion.findListed(); // secret-code promos don't get badges
   const itemStores = new Map();
   for (const p of live) itemStores.set(String(p._id), await storesWithMatchingItems(p));
   return stores.map((s) => ({

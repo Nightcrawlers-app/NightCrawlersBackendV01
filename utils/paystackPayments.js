@@ -20,7 +20,8 @@ const paystackError = (err) =>
   new Error(`Paystack: ${err.response?.data?.message || err.message}`);
 
 /** Start a payment. Amount in naira; Paystack wants kobo. */
-const initializeTransaction = async ({ email, amountNaira, reference, callbackUrl, metadata }) => {
+/** `channels` limits what Paystack offers, e.g. ['card'] for the in-app card form. */
+const initializeTransaction = async ({ email, amountNaira, reference, callbackUrl, metadata, channels }) => {
   try {
     const { data } = await client().post('/transaction/initialize', {
       email,
@@ -29,8 +30,14 @@ const initializeTransaction = async ({ email, amountNaira, reference, callbackUr
       reference,
       callback_url: callbackUrl,
       metadata,
+      ...(channels && { channels }),
     });
-    return { authorizationUrl: data.data.authorization_url, reference: data.data.reference };
+    return {
+      authorizationUrl: data.data.authorization_url,
+      // For Paystack's in-page popup (card form without leaving the app)
+      accessCode: data.data.access_code,
+      reference: data.data.reference,
+    };
   } catch (err) {
     throw paystackError(err);
   }

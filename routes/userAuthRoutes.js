@@ -53,6 +53,18 @@ router.post('/signup', signupLimit, async (req, res) => {
     const firstName = nameParts[0] || 'User';
     const lastName = nameParts.slice(1).join(' ') || '';
 
+    // Optional friend's referral code. A wrong code is reported rather than
+    // silently ignored, so nobody thinks they got a reward they didn't.
+    let referredBy = undefined;
+    const refCode = String(req.body.referralCode || '').trim().toUpperCase();
+    if (refCode) {
+      const referrer = await User.findOne({ referralCode: refCode, isVerified: true }, '_id email');
+      if (!referrer || referrer.email === String(email).toLowerCase()) {
+        return res.status(400).json({ message: "That referral code isn't valid. Check it, or leave it blank.", field: 'referralCode' });
+      }
+      referredBy = referrer._id;
+    }
+
     // If unverified account already exists (re-signup), update it.
     // Otherwise create a fresh one.
     let user;
@@ -64,6 +76,7 @@ router.post('/signup', signupLimit, async (req, res) => {
       existing.verificationCodeExpiry = expiry;
       existing.verificationCodeSentAt = now;
       existing.verificationAttempts = 0; //reset attempts on resend
+      if (referredBy) existing.referredBy = referredBy;
       user = await existing.save();
     } else {
       user = await User.create({
@@ -76,6 +89,7 @@ router.post('/signup', signupLimit, async (req, res) => {
         verificationCodeExpiry: expiry,
         verificationCodeSentAt: now,
         verificationAttempts: 0,
+        ...(referredBy && { referredBy }),
       });
     }
 
@@ -138,7 +152,14 @@ router.post('/verify', checkCodeLimit, async (req, res) => {
     user.verificationCodeSentAt = null;
     user.verificationAttempts = 0;
     user.lastKnownIp = getIp(req);
+    // Signed up with a friend's code: their welcome gift (see utils/rewards.js)
+    if (user.referredBy) {
+      const gift = require('../utils/rewards').rewardSettings().newUserFreeDeliveries;
+      if (gift > 0) user.rewards.freeDeliveries = (user.rewards.freeDeliveries || 0) + gift;
+    }
     await user.save();
+    // Their own code to share
+    await require('../utils/rewards').ensureReferralCode(user).catch((e) => console.error('Referral code:', e.message));
 
     // Send welcome email (fire-and-forget — don't block the response)
     sendWelcomeEmail(user.email, user.firstName).catch(err =>

@@ -9,12 +9,58 @@ const { arrivalCheck } = require('../utils/tripProgress');
 const { haversineKm } = require('../utils/deliveryFee');
 const { protect, requireRole, optionalAuth } = require('../middlewares/auth');
 const { geocodeAddress, readLatLng, toPoint, fromPoint } = require('../utils/geocoder');
+const { deliveryFeeFor } = require('../utils/deliveryFee');
+const { spendRewards, refundRewards, onOrderDelivered } = require('../utils/rewards');
+const Promotion = require('../models/promotionModel');
 
-// POST /api/orders/quote — { storeId, items: [{ menuItemId, quantity }], promotionId? }
-// The exact breakdown checkout should show. Same maths as placing the order.
-router.post('/quote', async (req, res) => {
+/** The signed-in customer (User doc), or null for guests / other roles. */
+const customerFor = async (req) => {
+  if (req.user?.role !== 'customer') return null;
+  const User = require('../models/userModel');
+  return User.findById(req.user.id);
+};
+
+/** Customer notes: plain text, trimmed, 300 characters max. */
+const cleanNote = (v) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, 300);
+
+/** Undo what an order took: rewards back to the customer, promo use back to the pool. */
+const releaseOrderPerks = async (order) => {
+  const User = require('../models/userModel');
+  if (order.customerId && (order.freeDeliveryUsed || order.deliveryCreditUsed > 0)) {
+    await refundRewards(User, order.customerId, order);
+  }
+  if (order.promotionId) {
+    await Promotion.updateOne({ _id: order.promotionId, timesUsed: { $gt: 0 } }, { $inc: { timesUsed: -1 } });
+  }
+  if (order.personalCodeId) {
+    const PersonalCode = require('../models/personalCodeModel');
+    await PersonalCode.updateOne({ _id: order.personalCodeId }, { $set: { usedAt: null, orderId: null } });
+  }
+};
+
+// GET /api/orders/delivery-estimate?storeId=…&lat=…&lng=… — the delivery
+// ("ride") fee from a store to a point, for the store page before checkout.
+// Same formula checkout uses. Without lat/lng: the flat fallback fee.
+router.get('/delivery-estimate', async (req, res) => {
   try {
-    const { storeId, items, promotionId } = req.body;
+    const { storeId } = req.query;
+    if (!require('mongoose').isValidObjectId(storeId)) return res.status(404).json({ message: 'Store not found' });
+    const store = await Store.findById(storeId, 'coordinates name');
+    if (!store) return res.status(404).json({ message: 'Store not found' });
+    const storePoint = store.coordinates?.coordinates?.length === 2 ? fromPoint(store.coordinates) : null;
+    const to = readLatLng(req.query);
+    const { fee, distanceKm, tooFar, maxKm } = deliveryFeeFor(storePoint, to);
+    res.json({ fee, distanceKm, tooFar, maxKm, estimated: !(storePoint && to) });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// POST /api/orders/quote — { storeId, items: [{ menuItemId, quantity }], promotionId?, promoCode?, useRewards? }
+// The exact breakdown checkout should show. Same maths as placing the order.
+router.post('/quote', optionalAuth, async (req, res) => {
+  try {
+    const { storeId, items, promotionId, promoCode } = req.body;
     if (!require('mongoose').isValidObjectId(storeId)) return res.status(404).json({ message: 'Store not found' });
     const store = await Store.findById(storeId);
     if (!store) return res.status(404).json({ message: 'Store not found' });
@@ -24,8 +70,17 @@ router.post('/quote', async (req, res) => {
       readLatLng({ lat: req.body.customerLatitude, lng: req.body.customerLongitude }) ||
       (req.body.customerAddress ? await geocodeAddress(req.body.customerAddress) : null);
 
-    const priced = await priceOrder({ store, items, promotionId, deliveryPoint, strictPromo: false });
-    for (const k of ['promo', 'vendorEarning', 'riderEarning', 'platformEarning']) delete priced[k];
+    const priced = await priceOrder({
+      store,
+      items,
+      promotionId,
+      promoCode,
+      deliveryPoint,
+      strictPromo: false,
+      customer: await customerFor(req),
+      useRewards: req.body.useRewards !== false,
+    });
+    for (const k of ['promo', 'personalCode', 'vendorEarning', 'riderEarning', 'platformEarning']) delete priced[k];
     res.json(priced);
   } catch (err) {
     if (err instanceof PricingError) return res.status(400).json({ message: err.message, ...err.extra });
@@ -85,47 +140,106 @@ router.post('/', optionalAuth, async (req, res) => {
     if (!delivery) delivery = await geocodeAddress(customerAddress);
 
     // All money is worked out on the server — see utils/orderPricing.js.
+    const customer = await customerFor(req);
     let priced;
     try {
-      priced = await priceOrder({ store, items, promotionId: req.body.promotionId, deliveryPoint: delivery, strictPromo: true });
+      priced = await priceOrder({
+        store,
+        items,
+        promotionId: req.body.promotionId,
+        promoCode: req.body.promoCode,
+        deliveryPoint: delivery,
+        strictPromo: true,
+        customer,
+        useRewards: req.body.useRewards !== false,
+      });
     } catch (err) {
       if (err instanceof PricingError) return res.status(400).json({ message: err.message, ...err.extra });
       throw err;
     }
 
+    // Claim a use of a limited promo — atomically, so the last slot can't go twice.
+    if (priced.promo) {
+      const claim = priced.promo.usageLimit
+        ? { _id: priced.promo._id, timesUsed: { $lt: priced.promo.usageLimit } }
+        : { _id: priced.promo._id };
+      const claimed = await Promotion.updateOne(claim, { $inc: { timesUsed: 1 } });
+      if (claimed.modifiedCount !== 1) {
+        return res.status(400).json({ message: 'This promo has just been fully used up.', promotionInvalid: true });
+      }
+    }
+    // A personal (campaign) code is single-use: claim it the same way.
+    const PersonalCode = require('../models/personalCodeModel');
+    if (priced.personalCode) {
+      const took = await PersonalCode.updateOne({ _id: priced.personalCode._id, usedAt: null }, { $set: { usedAt: new Date() } });
+      if (took.modifiedCount !== 1) {
+        await Promotion.updateOne({ _id: priced.promo._id }, { $inc: { timesUsed: -1 } });
+        return res.status(400).json({ message: "You've already used this code.", promotionInvalid: true });
+      }
+    }
+    // Spend rewards the same way; if the balance moved since the quote, ask them to re-check.
+    const User = require('../models/userModel');
+    if (customer && !(await spendRewards(User, customer._id, priced.rewards))) {
+      await releaseOrderPerks({ promotionId: priced.promo?._id, personalCodeId: priced.personalCode?._id });
+      return res.status(409).json({ message: 'Your rewards balance changed. Please check your total and try again.', rewardsChanged: true });
+    }
+
     const pickup = store.coordinates?.coordinates?.length === 2 ? store.coordinates : undefined;
 
-    const order = await Order.create({
-      storeId,
-      storeName: storeName || store.name,
-      vendorId: store.vendorId,
-      customerId: req.user?.role === 'customer' ? req.user.id : null,
-      customerName,
-      customerPhone,
-      customerLocation: customerLocation || delivery?.city || '',
-      customerAddress,
-      items: priced.items,
-      totalAmount: priced.subtotal, // food subtotal (kept as totalAmount for existing reports)
-      deliveryFee: priced.deliveryFee,
-      deliveryDistanceKm: priced.distanceKm,
-      serviceFee: priced.serviceFee,
-      totalPaid: priced.total,      // what the customer pays
-      vendorEarning: priced.vendorEarning,
-      riderEarning: priced.riderEarning,
-      platformEarning: priced.platformEarning,
-      paymentMethod,
-      paymentStatus: paymentMethod === 'online' ? 'pending' : 'not_required',
-      statusHistory: [{ status: 'pending', at: new Date() }],
-      status: 'pending',
-      ...(pickup && { pickupCoordinates: pickup }),
-      ...(priced.promo && {
-        promotionId: priced.promo._id,
-        promotionTitle: priced.promo.title,
-        discountAmount: priced.discount,
-        discountFundedBy: priced.promo.fundedBy,
-      }),
-      ...(delivery && { deliveryCoordinates: toPoint(delivery) }),
-    });
+    let order;
+    try {
+      order = await Order.create({
+        storeId,
+        storeName: storeName || store.name,
+        vendorId: store.vendorId,
+        customerId: req.user?.role === 'customer' ? req.user.id : null,
+        customerName,
+        customerPhone,
+        customerLocation: customerLocation || delivery?.city || '',
+        customerAddress,
+        items: priced.items,
+        totalAmount: priced.subtotal, // food subtotal (kept as totalAmount for existing reports)
+        deliveryFee: priced.deliveryFee,
+        deliveryDistanceKm: priced.distanceKm,
+        serviceFee: priced.serviceFee,
+        totalPaid: priced.total,      // what the customer pays
+        vendorEarning: priced.vendorEarning,
+        riderEarning: priced.riderEarning,
+        platformEarning: priced.platformEarning,
+        paymentMethod,
+        paymentStatus: paymentMethod === 'online' ? 'pending' : 'not_required',
+        statusHistory: [{ status: 'pending', at: new Date() }],
+        status: 'pending',
+        ...(pickup && { pickupCoordinates: pickup }),
+        ...(priced.promo && {
+          promotionId: priced.promo._id,
+          promotionTitle: priced.promo.title,
+          discountAmount: priced.discount,
+          discountFundedBy: priced.promo.fundedBy,
+          promoCode: priced.personalCode?.code || priced.promo.code || null,
+          personalCodeId: priced.personalCode?._id || null,
+        }),
+        rewardDiscount: priced.rewardDiscount,
+        freeDeliveryUsed: priced.rewards.freeDeliveryUsed,
+        deliveryCreditUsed: priced.rewards.deliveryCreditUsed,
+        noteForVendor: cleanNote(req.body.noteForVendor),
+        noteForRider: cleanNote(req.body.noteForRider),
+        ...(delivery && { deliveryCoordinates: toPoint(delivery) }),
+      });
+    } catch (err) {
+      // Nothing was ordered — give back what we took above.
+      await releaseOrderPerks({
+        customerId: customer?._id,
+        freeDeliveryUsed: priced.rewards.freeDeliveryUsed,
+        deliveryCreditUsed: priced.rewards.deliveryCreditUsed,
+        promotionId: priced.promo?._id,
+        personalCodeId: priced.personalCode?._id,
+      });
+      throw err;
+    }
+    if (priced.personalCode) {
+      await PersonalCode.updateOne({ _id: priced.personalCode._id }, { $set: { orderId: order._id } });
+    }
 
     res.status(201).json(order);
   } catch (err) {
@@ -288,6 +402,9 @@ router.get('/:id/track', protect, async (req, res) => {
       deliveryFee: order.deliveryFee,
       serviceFee: order.serviceFee,
       discount: order.discountAmount || 0,
+      rewardDiscount: order.rewardDiscount || 0,
+      noteForVendor: order.noteForVendor || '',
+      noteForRider: order.noteForRider || '',
       total: order.totalPaid ?? order.totalAmount + order.deliveryFee,
       serverTime: new Date(),
     });
@@ -390,9 +507,14 @@ router.patch('/:id/status', protect, async (req, res) => {
       if (!check.verifiable) order.deliveredUnverified = true; // no pin to check against
     }
 
+    const wasCancelled = order.status === 'cancelled';
     order.status = status;
     if (status === 'picked_up') order.pickedUpAt = new Date();
-    if (status === 'delivered') order.deliveredAt = new Date();
+    if (status === 'delivered') {
+      order.deliveredAt = new Date();
+      await onOrderDelivered(order); // points + referral reward (sets order.pointsEarned)
+    }
+    if (status === 'cancelled' && !wasCancelled) await releaseOrderPerks(order);
     if (['delivered', 'cancelled'].includes(status)) order.trip = null;
     order.statusHistory.push({ status, at: new Date() });
 

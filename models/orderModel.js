@@ -64,6 +64,20 @@ const OrderSchema = new mongoose.Schema(
     promotionTitle: { type: String, default: null },
     discountAmount: { type: Number, default: 0 },
     discountFundedBy: { type: String, enum: ['platform', 'vendor', null], default: null },
+    promoCode: { type: String, default: null },   // the code typed, if the promo needed one
+    personalCodeId: { type: mongoose.Schema.Types.ObjectId, ref: 'PersonalCode', default: null }, // campaign code used
+
+    // Loyalty rewards spent on this order (platform-funded; see utils/rewards.js)
+    rewardDiscount: { type: Number, default: 0 },
+    freeDeliveryUsed: { type: Boolean, default: false },
+    deliveryCreditUsed: { type: Number, default: 0 },
+    // Points earned once delivered (and whether they've been added yet)
+    pointsEarned: { type: Number, default: 0 },
+    pointsAwarded: { type: Boolean, default: false },
+
+    // Notes from the customer. Kept short: they're read on a phone mid-shift.
+    noteForVendor: { type: String, default: '', trim: true, maxlength: 300 },   // "no onions"
+    noteForRider: { type: String, default: '', trim: true, maxlength: 300 },    // "blue gate, call on arrival"
 
     // ── Payment ────────────────────────────────────────────────────────────
     //   cash_on_delivery / card_on_delivery → paid to the rider; nothing online

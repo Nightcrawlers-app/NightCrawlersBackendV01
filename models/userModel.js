@@ -54,6 +54,22 @@ const UserSchema = new mongoose.Schema(
     },
     addresses: [AddressSchema],
     favoriteVendors: [{ type: String }],
+    // Favourites shown on the profile: stores to go back to, and past orders
+    // to repeat with one tap.
+    favoriteStores: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Store' }],
+    favoriteOrders: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Order' }],
+
+    // ── Loyalty (see utils/rewards.js) ──────────────────────────────────────
+    rewards: {
+      points: { type: Number, default: 0, min: 0 },
+      deliveryCredit: { type: Number, default: 0, min: 0 },   // ₦, pays delivery fees only
+      freeDeliveries: { type: Number, default: 0, min: 0 },   // vouchers
+    },
+    // Their own code to share, and who referred them (if anyone).
+    referralCode: { type: String, default: null, uppercase: true, trim: true },
+    referredBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    // True once the referrer has been rewarded for this customer.
+    referralRewarded: { type: Boolean, default: false },
     notifications: {
       orderUpdates: { type: Boolean, default: true },
       promotions: { type: Boolean, default: false },
@@ -85,6 +101,11 @@ const UserSchema = new mongoose.Schema(
 );
 
 UserSchema.index({ coordinates: '2dsphere' }, { sparse: true });
+// Unique only among users who have a code (most old accounts don't yet).
+UserSchema.index(
+  { referralCode: 1 },
+  { unique: true, partialFilterExpression: { referralCode: { $type: 'string' } } }
+);
 
 UserSchema.pre('save', async function (next) {
   if (!this.isModified('password')) return next();
@@ -123,6 +144,14 @@ UserSchema.methods.toSafeJSON = function () {
       ? { latitude: point.coordinates[1], longitude: point.coordinates[0] }
       : { latitude: null, longitude: null };
   Object.assign(obj, toLatLng(obj.coordinates));
+  obj.favoriteStores = (obj.favoriteStores || []).map(String);
+  obj.favoriteOrders = (obj.favoriteOrders || []).map(String);
+  obj.referredBy = obj.referredBy ? String(obj.referredBy) : null;
+  obj.rewards = {
+    points: obj.rewards?.points || 0,
+    deliveryCredit: obj.rewards?.deliveryCredit || 0,
+    freeDeliveries: obj.rewards?.freeDeliveries || 0,
+  };
   obj.addresses = (obj.addresses || []).map((a) => ({
     ...a,
     id: String(a._id),
