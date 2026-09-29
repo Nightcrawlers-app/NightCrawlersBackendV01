@@ -176,3 +176,14 @@ New `utils/orderAlerts.js`, run every minute with the order timers. These never 
 - The tracking payload now includes `delays`: prepLate, findingRider, deliveryDelayed, canCancel.
 - `cancelOrder()` accepts an `extraFilter` option.
 - New alert tests in `tests/orderTimers.test.js`.
+
+---
+
+# Real ratings and delivery times on store cards (sixth round)
+- **Ratings.** `POST /api/orders/:id/rate` takes `{ storeStars 1–5, riderStars? 1–5, comment? }`.
+  - Only the customer can rate, only once, and only within 7 days of delivery. It's atomic, so a double tap can't count twice.
+  - Stores and riders keep `ratingSum` and `ratingCount`.
+  - Store JSON now has `rating: { average, count }`. The average is only shown once a store has 3 or more ratings.
+  - The tracking payload has `rating` and `canRate`.
+- **Delivery times.** Store JSON now has `etaMinutes: { min, max }`, calculated with `estimateForStore()` in `utils/orderEta.js`: the prep time for the store's category plus the rider's pickup and ride. The store list uses the customer's real distance when it knows it, and `/api/orders/delivery-estimate` also returns `etaMinutes`.
+- New `tests/ratings.test.js`, which uses its own database.

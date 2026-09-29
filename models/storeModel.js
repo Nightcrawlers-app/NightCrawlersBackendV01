@@ -15,6 +15,9 @@ const StoreSchema = new mongoose.Schema(
     vendorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Vendor', required: true, index: true },
     name: { type: String, required: true },
     businessType: { type: String, enum: BUSINESS_TYPES, required: true },
+    // Customer ratings: sum and count of stars (1–5), so the average never drifts
+    ratingSum: { type: Number, default: 0 },
+    ratingCount: { type: Number, default: 0 },
     categories: [{ type: String }],
     address: { type: String, required: true },
     description: { type: String, default: '' },
@@ -86,10 +89,25 @@ StoreSchema.methods.getStatus = function (now = new Date()) {
  * Adds a virtual `status` field to every toJSON/toObject call
  * so the frontend always gets { ...store, status: 'open' | 'closed' | '24hrs' }
  */
+/** Show a store's average rating once it has at least this many. */
+const MIN_RATINGS_SHOWN = 3;
+
 StoreSchema.set('toJSON', {
   virtuals: true,
   transform: (doc, ret) => {
     ret.status = doc.getStatus();
+    // Customer ratings (orders are rated after delivery). Average only once
+    // there are a few, so one bad night doesn't define a new store.
+    const count = doc.ratingCount || 0;
+    ret.rating = {
+      average: count >= MIN_RATINGS_SHOWN ? Math.round(((doc.ratingSum || 0) / count) * 10) / 10 : null,
+      count,
+    };
+    delete ret.ratingSum;
+    delete ret.ratingCount;
+    // Usual delivery time; the store list replaces it with one for the
+    // customer's actual distance when it knows where they are.
+    ret.etaMinutes = require('../utils/orderEta').estimateForStore(doc.businessType, null);
     const c = doc.coordinates?.coordinates;
     ret.latitude = Array.isArray(c) && c.length === 2 ? c[1] : null;
     ret.longitude = Array.isArray(c) && c.length === 2 ? c[0] : null;

@@ -92,4 +92,20 @@ const estimateDelivery = (order, { businessType = 'Food', now = new Date() } = {
   return { earliest, latest: new Date(earliest.getTime() + s.windowMin * MIN) };
 };
 
-module.exports = { estimateDelivery, reachedAt, PREP_MINUTES };
+/**
+ * How long an order from a store usually takes to arrive, before ordering:
+ * store confirms + prep time for its category + rider accepts + rider reaches
+ * the store + ride to the customer. Shown on store cards ("25–40 min").
+ *   distanceKm — store to customer, or null when we don't know where they are
+ */
+const estimateForStore = (businessType, distanceKm = null) => {
+  const s = settings();
+  const prep = PREP_MINUTES()[businessType] ?? 20;
+  const km = distanceKm ?? s.defaultKm;
+  const ride = Math.max(5, Math.round((km / s.speedKmh) * 60));
+  const total = s.confirmMin + prep + s.dispatchMin + s.toStoreMin + ride;
+  const min = Math.max(10, Math.floor(total / 5) * 5);
+  return { min, max: min + s.windowMin, estimated: distanceKm == null };
+};
+
+module.exports = { estimateDelivery, reachedAt, PREP_MINUTES, estimateForStore };

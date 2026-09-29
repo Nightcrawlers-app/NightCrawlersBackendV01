@@ -22,6 +22,8 @@ const MAX_RADIUS_M = 50000;
  * show "50% OFF" badges. Live promos are few, so this is one small query.
  */
 /** Store ids that sell at least one item matching the promo's keywords (null = no keywords). */
+const { estimateForStore } = require('../utils/orderEta');
+
 const storesWithMatchingItems = async (promo) => {
   if (!(promo.itemKeywords || []).length) return null;
   const MenuItem = require('../models/menuItemModel');
@@ -158,10 +160,15 @@ router.get('/', optionalAuth, async (req, res) => {
 
     res.json(
       await withPromotions(withMatches(
-        results.map(({ distanceMeters, ...raw }) => ({
-          ...Store.hydrate(raw).toJSON(),
-          distance: Math.round((distanceMeters / 1000) * 10) / 10, // km, 1 decimal
-        }))
+        results.map(({ distanceMeters, ...raw }) => {
+          const store = Store.hydrate(raw);
+          return {
+            ...store.toJSON(),
+            distance: Math.round((distanceMeters / 1000) * 10) / 10, // km, 1 decimal
+            // Delivery time for THIS customer's distance (roads wind: × 1.3)
+            etaMinutes: estimateForStore(store.businessType, (distanceMeters / 1000) * 1.3),
+          };
+        })
       ))
     );
   } catch (err) {

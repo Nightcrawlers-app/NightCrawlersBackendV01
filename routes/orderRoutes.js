@@ -34,12 +34,13 @@ router.get('/delivery-estimate', async (req, res) => {
   try {
     const { storeId } = req.query;
     if (!require('mongoose').isValidObjectId(storeId)) return res.status(404).json({ message: 'Store not found' });
-    const store = await Store.findById(storeId, 'coordinates name');
+    const store = await Store.findById(storeId, 'coordinates name businessType');
     if (!store) return res.status(404).json({ message: 'Store not found' });
     const storePoint = store.coordinates?.coordinates?.length === 2 ? fromPoint(store.coordinates) : null;
     const to = readLatLng(req.query);
     const { fee, distanceKm, tooFar, maxKm } = deliveryFeeFor(storePoint, to);
-    res.json({ fee, distanceKm, tooFar, maxKm, estimated: !(storePoint && to) });
+    const etaMinutes = require('../utils/orderEta').estimateForStore(store.businessType, distanceKm ?? null);
+    res.json({ fee, distanceKm, tooFar, maxKm, estimated: !(storePoint && to), etaMinutes });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -375,6 +376,9 @@ router.get('/:id/track', protect, async (req, res) => {
       acceptDeadline: order.status === 'pending' ? order.acceptDeadline : null,
       // Running late / can cancel (utils/orderAlerts.js)
       delays: require('../utils/orderAlerts').customerView(order),
+      // Rating: what they gave, and whether they can still rate (7 days after delivery)
+      rating: order.rating?.at ? { storeStars: order.rating.storeStars, riderStars: order.rating.riderStars, comment: order.rating.comment } : null,
+      canRate: canRateOrder(order),
       steps: {
         placed: order.createdAt,
         confirmed: at('preparing'),
@@ -420,6 +424,50 @@ router.get('/:id/track', protect, async (req, res) => {
 
 // Old path, kept so existing clients don't break.
 router.get('/pending/list', protect, requireRole('rider'), listPendingForRider);
+
+const RATE_WITHIN_DAYS = 7;
+const canRateOrder = (order) =>
+  order.status === 'delivered' &&
+  !order.rating?.at &&
+  order.deliveredAt &&
+  Date.now() - new Date(order.deliveredAt).getTime() < RATE_WITHIN_DAYS * 24 * 60 * 60 * 1000;
+
+// POST /api/orders/:id/rate — { storeStars: 1–5, riderStars?: 1–5, comment? }
+// Once per order, up to 7 days after delivery. Feeds the store's (and rider's) average.
+router.post('/:id/rate', protect, requireRole('customer'), async (req, res) => {
+  try {
+    if (!require('mongoose').isValidObjectId(req.params.id)) return res.status(404).json({ message: 'Order not found' });
+    const stars = (v) => (v === undefined || v === null || v === '' ? null : Math.round(Number(v)));
+    const storeStars = stars(req.body.storeStars);
+    const riderStars = stars(req.body.riderStars);
+    const valid = (n) => Number.isInteger(n) && n >= 1 && n <= 5;
+    if (!valid(storeStars)) return res.status(400).json({ message: 'Choose 1 to 5 stars for the store.' });
+    if (riderStars !== null && !valid(riderStars)) return res.status(400).json({ message: 'Rider stars must be 1 to 5.' });
+    const comment = String(req.body.comment || '').replace(/\s+/g, ' ').trim().slice(0, 500);
+
+    const order = await Order.findById(req.params.id);
+    if (!order || String(order.customerId) !== String(req.user.id)) return res.status(404).json({ message: 'Order not found' });
+    if (order.rating?.at) return res.status(409).json({ message: "You've already rated this order. Thank you!" });
+    if (!canRateOrder(order)) return res.status(400).json({ message: 'Only delivered orders from the last 7 days can be rated.' });
+
+    // Atomic: two taps can't rate twice or count twice.
+    const rated = await Order.findOneAndUpdate(
+      { _id: order._id, 'rating.at': null },
+      { $set: { rating: { storeStars, riderStars: order.riderId ? riderStars : null, comment, at: new Date() } } },
+      { new: true }
+    );
+    if (!rated) return res.status(409).json({ message: "You've already rated this order. Thank you!" });
+
+    await Store.updateOne({ _id: order.storeId }, { $inc: { ratingSum: storeStars, ratingCount: 1 } });
+    if (order.riderId && riderStars) {
+      const Rider = require('../models/riderModel');
+      await Rider.updateOne({ _id: order.riderId }, { $inc: { ratingSum: riderStars, ratingCount: 1 } });
+    }
+    res.json({ rating: { storeStars, riderStars: rated.rating.riderStars, comment } });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
 
 // POST /api/orders/:id/cancel — the customer cancels their own order.
 // Allowed before the store accepts it, or after a long wait for a rider

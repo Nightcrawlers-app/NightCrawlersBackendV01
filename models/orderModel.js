@@ -148,6 +148,14 @@ const OrderSchema = new mongoose.Schema(
       },
     ],
 
+    // ── The customer's rating, after delivery ──────────────────────────────
+    rating: {
+      storeStars: { type: Number, min: 1, max: 5, default: null },
+      riderStars: { type: Number, min: 1, max: 5, default: null },
+      comment: { type: String, default: '', maxlength: 500 },
+      at: { type: Date, default: null },
+    },
+
     // ── Cancellation ───────────────────────────────────────────────────────
     cancelledAt: { type: Date, default: null },
     cancelledBy: { type: String, enum: ['customer', 'vendor', 'admin', 'system', null], default: null },
