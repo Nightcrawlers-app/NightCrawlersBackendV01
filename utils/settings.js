@@ -22,6 +22,10 @@ const publicConfig = () => ({
   // How delivery is priced (for display, e.g. "₦500 + ₦150/km after 2 km")
   delivery: (({ baseFee, perKm, includedKm, minFee, maxFee, maxKm }) => ({ baseFee, perKm, includedKm, minFee, maxFee, maxKm }))(deliveryFeeSettings()),
   serviceFeePercent: SERVICE_FEE_PERCENT(),
+  // Order timers, so the apps can show countdowns (utils/orderTimers.js)
+  timers: (({ enabled, vendorAcceptMin, paymentTimeoutMin }) => ({ enabled, vendorAcceptMin, paymentTimeoutMin }))(
+    require('./orderTimers').timerSettings()
+  ),
 });
 
 module.exports = { phoneVerificationRequired, onlinePaymentsEnabled, publicConfig };

@@ -19,6 +19,16 @@ const applyPayment = async (order, tx) => {
   if (tx.status === 'success' && tx.currency === 'NGN' && tx.amountNaira >= expected) {
     order.paymentStatus = 'paid';
     order.paidAt = tx.paidAt ? new Date(tx.paidAt) : new Date();
+    // The order now goes to the store, so the store's accept clock starts.
+    if (order.status === 'pending' && !order.acceptDeadline) {
+      order.acceptDeadline = require('../utils/orderTimers').acceptDeadlineFromNow();
+    }
+    // Paid AFTER the order was cancelled (e.g. it expired while they were on
+    // Paystack's page): keep the record straight and give the money back.
+    if (order.status === 'cancelled') {
+      await order.save();
+      return (await require('../utils/refunds').refundOrder(order, 'Payment arrived after the order was cancelled')) || order;
+    }
   } else if (['failed', 'abandoned', 'reversed'].includes(tx.status)) {
     order.paymentStatus = 'failed';
   } else if (tx.status === 'success') {
@@ -111,6 +121,11 @@ router.post('/paystack/webhook', async (req, res) => {
   res.status(200).end(); // acknowledge quickly; Paystack retries otherwise
   try {
     const { event, data } = req.body || {};
+    // Refund updates (refund.processed / refund.failed / refund.pending)
+    if (typeof event === 'string' && event.startsWith('refund.')) {
+      await require('../utils/refunds').applyRefundWebhook(event, data);
+      return;
+    }
     if (event !== 'charge.success' || !data?.reference) return;
     const order = await Order.findOne({ paystackReference: data.reference });
     if (!order) return;

@@ -108,7 +108,6 @@ const priceOrder = async ({
       : { eligible: false, discount: 0, reason: 'That promo no longer exists.' };
     // Code promos only work with the (right person's) code; some depend on who's ordering.
     if (result.eligible) {
-      require('../models/personalCodeModel'); // registers the model used by checkCode
       const check = await promo.checkCode(promoCode, customer?._id ?? null);
       if (check.reason) result = { eligible: false, discount: 0, reason: check.reason };
       else personalCode = check.personalCode;

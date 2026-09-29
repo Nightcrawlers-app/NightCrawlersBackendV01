@@ -63,4 +63,28 @@ const isValidWebhookSignature = (rawBody, signature) => {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 };
 
-module.exports = { initializeTransaction, verifyTransaction, isValidWebhookSignature };
+/**
+ * Refund a successful payment, in full unless `amountNaira` is given.
+ * Paystack accepts it straight away and processes it in the background; the
+ * result arrives later as a refund.processed / refund.failed webhook.
+ * Returns { status, alreadyRefunded } — alreadyRefunded when Paystack says the
+ * transaction was already fully refunded (so a retry is harmless).
+ */
+const createRefund = async ({ reference, amountNaira, customerNote, merchantNote }) => {
+  try {
+    const { data } = await client().post('/refund', {
+      transaction: reference,
+      ...(amountNaira && { amount: Math.round(amountNaira * 100) }),
+      currency: 'NGN',
+      ...(customerNote && { customer_note: customerNote.slice(0, 200) }),
+      ...(merchantNote && { merchant_note: merchantNote.slice(0, 200) }),
+    });
+    return { status: data.data?.status || 'pending', alreadyRefunded: false };
+  } catch (err) {
+    const msg = err.response?.data?.message || '';
+    if (/fully reversed|already been refunded|fully refunded/i.test(msg)) return { status: 'processed', alreadyRefunded: true };
+    throw paystackError(err);
+  }
+};
+
+module.exports = { initializeTransaction, verifyTransaction, isValidWebhookSignature, createRefund };

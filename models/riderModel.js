@@ -64,6 +64,8 @@ const RiderSchema = new mongoose.Schema(
     },
     locationUpdatedAt: { type: Date, default: null },
     lastSeen: { type: Date, default: null },
+    // Jobs taken off this rider because the pick-up time ran out (utils/orderTimers.js)
+    releasedJobs: { type: Number, default: 0 },
     verified: { type: Boolean, default: false },
     // Rejected applications are kept (not deleted) so there's a record and
     // the applicant can see why and reapply.

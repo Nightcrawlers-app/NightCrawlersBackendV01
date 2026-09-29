@@ -23,20 +23,9 @@ const customerFor = async (req) => {
 /** Customer notes: plain text, trimmed, 300 characters max. */
 const cleanNote = (v) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, 300);
 
-/** Undo what an order took: rewards back to the customer, promo use back to the pool. */
-const releaseOrderPerks = async (order) => {
-  const User = require('../models/userModel');
-  if (order.customerId && (order.freeDeliveryUsed || order.deliveryCreditUsed > 0)) {
-    await refundRewards(User, order.customerId, order);
-  }
-  if (order.promotionId) {
-    await Promotion.updateOne({ _id: order.promotionId, timesUsed: { $gt: 0 } }, { $inc: { timesUsed: -1 } });
-  }
-  if (order.personalCodeId) {
-    const PersonalCode = require('../models/personalCodeModel');
-    await PersonalCode.updateOne({ _id: order.personalCodeId }, { $set: { usedAt: null, orderId: null } });
-  }
-};
+// Undo what an order took (rewards, promo use, personal code) — shared with the order timers.
+const { releaseOrderPerks, acceptDeadlineFromNow, pickupDeadlineFor } = require('../utils/orderTimers');
+const { refundOrder, needsRefund } = require('../utils/refunds');
 
 // GET /api/orders/delivery-estimate?storeId=…&lat=…&lng=… — the delivery
 // ("ride") fee from a store to a point, for the store page before checkout.
@@ -208,6 +197,9 @@ router.post('/', optionalAuth, async (req, res) => {
         platformEarning: priced.platformEarning,
         paymentMethod,
         paymentStatus: paymentMethod === 'online' ? 'pending' : 'not_required',
+        // Pay-on-delivery orders go to the store now, so its clock starts now.
+        // Online orders start theirs when payment arrives (paymentRoutes).
+        acceptDeadline: paymentMethod === 'online' ? null : acceptDeadlineFromNow(),
         statusHistory: [{ status: 'pending', at: new Date() }],
         status: 'pending',
         ...(pickup && { pickupCoordinates: pickup }),
@@ -253,7 +245,12 @@ router.post('/', optionalAuth, async (req, res) => {
 const listPendingForRider = async (req, res) => {
   try {
     const { location, radius } = req.query;
-    const query = { status: 'ready', riderId: null };
+    const query = {
+      status: 'ready',
+      riderId: null,
+      // Not jobs this rider already let run out
+      'riderReleases.riderId': { $ne: new (require('mongoose').Types.ObjectId)(String(req.user.id)) },
+    };
     const point = readLatLng(req.query);
 
     if (point) {
@@ -370,6 +367,12 @@ router.get('/:id/track', protect, async (req, res) => {
       paymentMethod: order.paymentMethod,
       paymentStatus: order.paymentStatus,
       placedAt: order.createdAt,
+      // Why it was cancelled, and where the refund is (online orders)
+      cancelReason: order.status === 'cancelled' ? order.cancelReason || '' : '',
+      cancelledBy: order.status === 'cancelled' ? order.cancelledBy : null,
+      refundStatus: order.refundStatus || 'none',
+      refundAmount: order.refundAmount || 0,
+      acceptDeadline: order.status === 'pending' ? order.acceptDeadline : null,
       steps: {
         placed: order.createdAt,
         confirmed: at('preparing'),
@@ -428,14 +431,32 @@ router.post('/:id/accept', protect, requireRole('rider'), async (req, res) => {
     if (order.status !== 'ready') {
       return res.status(400).json({ message: 'Order is not ready for pickup yet.' });
     }
+    if ((order.riderReleases || []).some((r) => String(r.riderId) === String(req.user.id))) {
+      return res.status(400).json({ message: "Your pick-up time ran out on this order, so it's gone to another rider." });
+    }
 
-    order.riderId = req.user.id;
-    order.status = 'accepted';
-    order.acceptedAt = new Date();
-    order.statusHistory.push({ status: 'accepted', at: order.acceptedAt });
-    await order.save();
+    // Pick-up deadline: their ride to the store plus a buffer (utils/orderTimers.js)
+    const Rider = require('../models/riderModel');
+    const rider = await Rider.findById(req.user.id, 'coordinates locationUpdatedAt');
+    const acceptedAt = new Date();
+    // Atomic, so two riders tapping Accept at once can't both get it.
+    const taken = await Order.findOneAndUpdate(
+      { _id: order._id, status: 'ready', riderId: null },
+      {
+        $set: {
+          riderId: req.user.id,
+          status: 'accepted',
+          acceptedAt,
+          pickupDeadline: pickupDeadlineFor(order, rider),
+          riderWarnedAt: null,
+        },
+        $push: { statusHistory: { status: 'accepted', at: acceptedAt } },
+      },
+      { new: true }
+    );
+    if (!taken) return res.status(409).json({ message: 'Order already accepted by another rider.' });
 
-    res.json(order);
+    res.json(taken);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -508,6 +529,11 @@ router.patch('/:id/status', protect, async (req, res) => {
     }
 
     const wasCancelled = order.status === 'cancelled';
+    if (status === 'cancelled' && !wasCancelled) {
+      order.cancelledAt = new Date();
+      order.cancelledBy = role === 'admin' ? 'admin' : role === 'vendor' ? 'vendor' : 'system';
+      order.cancelReason = String(req.body.reason || (role === 'vendor' ? `${order.storeName} cancelled the order.` : 'Cancelled by Nightcrawlers.')).slice(0, 300);
+    }
     order.status = status;
     if (status === 'picked_up') order.pickedUpAt = new Date();
     if (status === 'delivered') {
@@ -519,6 +545,15 @@ router.patch('/:id/status', protect, async (req, res) => {
     order.statusHistory.push({ status, at: new Date() });
 
     await order.save();
+
+    // Paid online and now cancelled → refund automatically, and tell the customer.
+    if (status === 'cancelled' && !wasCancelled) {
+      let latest = order;
+      if (needsRefund(order)) latest = (await refundOrder(order, order.cancelReason)) || order;
+      // Email/SMS in the background; the vendor or admin doesn't wait for it.
+      require('../utils/orderTimers').notifyCustomerCancelled(latest, order.cancelReason).catch(() => {});
+      return res.json(latest);
+    }
     res.json(order);
   } catch (err) {
     res.status(500).json({ message: err.message });

@@ -26,6 +26,7 @@ const geoRoutes = require('./routes/geoRoutes');
 const contactRoutes = require('./routes/contactRoutes');
 const promotionRoutes = require('./routes/promotionRoutes');
 const placementRoutes = require('./routes/placementRoutes');
+const refundRoutes = require('./routes/refundRoutes');
 const { router: paymentRoutes } = require('./routes/paymentRoutes');
 const swaggerUi = require("swagger-ui-express");
 const swaggerFile = require("./swagger-output.json");
@@ -124,6 +125,9 @@ app.use('/api/admin/promotions', promotionRoutes.adminRouter);   // admin CRUD
 // ─── Sponsored tiles ("Popular on Nightcrawlers" ads) ───────────────────────
 app.use('/api/placements', placementRoutes.publicRouter);        // live ads per tab, click counts
 app.use('/api/admin/placements', placementRoutes.adminRouter);   // admin CRUD
+
+// ─── Refunds that need a person (failed / stuck) ────────────────────────────
+app.use('/api/admin/refunds', refundRoutes);
 
 // ─── Marketing site ─────────────────────────────────────────────────────────
 app.use('/api', contactRoutes);           // POST /api/contact, POST /api/newsletter

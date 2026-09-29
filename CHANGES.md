@@ -116,3 +116,43 @@ Then run `docker compose up -d --force-recreate nginx`.
 - **Fast 503 while the database is down.** While MongoDB is fully disconnected, `/api` calls get an immediate 503 "try again" instead of hanging 10 seconds and then failing. The frontend retries those automatically on page loads.
 - **Database errors reported as 503.** The global error handler turns database-unreachable errors into 503 with `Retry-After`, instead of a generic 500.
 - **One connection instead of two.** `connectDB()` was being called twice, once in `app.js` and once in `server.js`. It now connects only once.
+
+---
+
+# Order timers and automatic refunds (fourth round)
+
+## Timers (`utils/orderTimers.js`, checked every minute)
+- **Unpaid online orders** are cancelled after 30 minutes. This gives back any promo use, rewards or personal code they were holding; before, an abandoned order kept them forever.
+- **Store must accept in time.** The accept clock starts at checkout for pay-on-delivery orders, and when payment arrives for online orders.
+  - At 5 minutes the vendor gets an SMS reminder.
+  - At 10 minutes the order is cancelled, paid orders are refunded automatically, the customer gets an email and SMS, and the vendor gets an SMS.
+- **Rider must pick up in time.** When a rider accepts, they get a pick-up deadline: their ride time to the store plus 10 minutes, kept between 15 and 45 minutes.
+  - At the halfway point they get a warning SMS.
+  - At the deadline the job goes back to other riders. It is never released if the rider is already at the store.
+  - A released rider can't take that same order again, and `releasedJobs` on the rider counts how often it has happened.
+- **Safe against double actions.** Every change only happens if the order is still in the expected state, so a restart, a second server, or a vendor tapping Accept at the same moment can't cause a double cancel or release.
+- **Rider accept is now atomic.** Two riders tapping Accept at the same moment can no longer both get the job.
+- The timers start in `server.js` (so not during tests). All time limits are settings in `.env`.
+
+## Refunds (`utils/refunds.js`)
+- Every cancelled paid online order is refunded through Paystack. That includes cancellations by the timers, by the vendor and by an admin.
+- **Refunds can't happen twice.** Each order is claimed before Paystack is asked, and Paystack's "already refunded" reply counts as done.
+- **Late payments are refunded.** A payment that arrives after its order was cancelled is refunded automatically.
+- **Refund status is tracked.** Paystack's `refund.processed` and `refund.failed` webhooks update the order's refund status.
+- New order fields: `acceptDeadline`, `pickupDeadline`, `riderReleases`, `cancelledBy`, `cancelReason`, `cancelledAt`, and `refundStatus` with its details.
+- **Admin refund endpoints:**
+  - `GET /api/admin/refunds` lists refunds that need attention, are in progress, or are done.
+  - `POST /api/admin/refunds/:orderId/retry` asks Paystack again.
+  - `POST /api/admin/refunds/:orderId/manual` records a refund you made yourself.
+- The tracking endpoint now includes the cancel reason, refund status and amount, and the accept deadline.
+- `/api/config` includes the timer settings.
+
+## Tests
+- New `tests/orderTimers.test.js` runs against real MongoDB (CI has one) in its own database, `nightcrawlers_timers_test`.
+
+## Before deploying
+- In the Paystack dashboard, the webhook URL is the same one as before. Refund events arrive on it automatically.
+- Orders placed before this update have no deadline, so the timers leave them alone.
+
+## Fix: 2 failing tests in `tests/rewards.test.js`
+`promotionModel.js` looked up the Order and PersonalCode models by name with `mongoose.model('Order')`. That only works if something else has already loaded them. In the app something always has, but the unit test loads only the promo and pricing code, so the lookup failed. The models are now loaded directly with `require`, which works either way. The app's behaviour doesn't change.

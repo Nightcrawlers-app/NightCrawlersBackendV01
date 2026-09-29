@@ -19,6 +19,10 @@ process.on('uncaughtException', (err) => {
 
 connectDB();
 
+// Order timers (store accept / rider pick-up deadlines, unpaid orders, refunds).
+// Started here, not in app.js, so tests don't run them.
+require('./utils/orderTimers').startOrderTimers();
+
 // Log clearly at boot whether email works, instead of failing silently later.
 require('./utils/mailer').verifyMailer();
 {

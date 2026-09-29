@@ -108,6 +108,49 @@ const OrderSchema = new mongoose.Schema(
     acceptedAt: { type: Date, default: null },
     pickedUpAt: { type: Date, default: null },
     deliveredAt: { type: Date, default: null },
+
+    // ── Timers (see utils/orderTimers.js) ──────────────────────────────────
+    // The store must accept (pending → preparing) by this time or the order
+    // is cancelled. Set when the order can be worked on: at creation for
+    // pay-on-delivery, when payment arrives for online orders.
+    acceptDeadline: { type: Date, default: null, index: true },
+    vendorRemindedAt: { type: Date, default: null },
+    // The rider who accepted must pick up by this time or the job goes back
+    // to other riders (unless they're already at the store).
+    pickupDeadline: { type: Date, default: null, index: true },
+    riderWarnedAt: { type: Date, default: null },
+    // Riders whose time ran out on this order (they can't take it again).
+    riderReleases: [
+      {
+        _id: false,
+        riderId: { type: mongoose.Schema.Types.ObjectId, ref: 'Rider' },
+        at: { type: Date, default: Date.now },
+      },
+    ],
+
+    // ── Cancellation ───────────────────────────────────────────────────────
+    cancelledAt: { type: Date, default: null },
+    cancelledBy: { type: String, enum: ['customer', 'vendor', 'admin', 'system', null], default: null },
+    cancelReason: { type: String, default: '', maxlength: 300 },
+
+    // ── Refunds (online payments; see utils/refunds.js) ────────────────────
+    //   none       nothing to refund
+    //   requesting we're asking Paystack right now
+    //   pending    Paystack accepted the refund and is processing it
+    //   processed  Paystack says the money has gone back
+    //   failed     Paystack refused or errored — admin needs to retry or refund by hand
+    //   manual     admin marked it refunded outside the app
+    refundStatus: {
+      type: String,
+      enum: ['none', 'requesting', 'pending', 'processed', 'failed', 'manual'],
+      default: 'none',
+      index: true,
+    },
+    refundAmount: { type: Number, default: 0 },
+    refundRequestedAt: { type: Date, default: null },
+    refundedAt: { type: Date, default: null },
+    refundError: { type: String, default: '' },
+    refundNote: { type: String, default: '' },
   },
   { timestamps: { createdAt: 'createdAt', updatedAt: true } }
 );

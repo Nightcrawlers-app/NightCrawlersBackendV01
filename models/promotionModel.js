@@ -203,7 +203,9 @@ PromotionSchema.methods.customerIneligibleReason = async function (customerId) {
   if (restricted && !this.customerIds.some((id) => String(id) === String(customerId))) {
     return "This code isn't linked to your account.";
   }
-  const Order = mongoose.model('Order');
+  // Loaded here (not looked up by name) so this works even where nothing else
+  // has loaded the Order model yet — e.g. a unit test.
+  const Order = require('./orderModel');
   if (this.audience === 'new_customers') {
     const previous = await Order.countDocuments({ customerId, status: { $ne: 'cancelled' } });
     if (previous > 0) return 'This promo is for your first order only.';
@@ -227,7 +229,7 @@ PromotionSchema.methods.checkCode = async function (typed, customerId) {
   if (this.isCampaign) {
     if (!customerId) return { reason: 'Sign in to use your code.' };
     if (!code) return { reason: 'Enter your personal code to use this promo.' };
-    const PersonalCode = mongoose.model('PersonalCode');
+    const PersonalCode = require('./personalCodeModel');
     const pc = await PersonalCode.findOne({ promotionId: this._id, code });
     if (!pc) return { reason: "That code isn't valid." };
     if (String(pc.customerId) !== String(customerId)) return { reason: "This code isn't linked to your account." };

@@ -436,7 +436,32 @@ const sendPersonalCodeEmail = async (to, firstName, { code, title, offer, expire
   });
 };
 
+/**
+ * Their order was cancelled (e.g. the store didn't respond in time).
+ *   refundAmount — ₦ being refunded, or 0 for pay-on-delivery orders
+ */
+const sendOrderCancelledEmail = async (to, firstName, { storeName, reason, refundAmount }) => {
+  const frontend = (process.env.FRONTEND_URL || 'http://localhost:5173').split(',')[0].trim().replace(/\/$/, '');
+  const money = refundAmount
+    ? `We've started a full refund of <strong>₦${Number(refundAmount).toLocaleString()}</strong> to the card or account you paid with. Paystack handles it, and your bank usually shows it within a few working days.`
+    : "You weren't charged anything.";
+  await sendMail({
+    from: `"Nightcrawlers" <${process.env.SMTP_FROM}>`,
+    to,
+    subject: `Your order from ${escapeHtml(storeName)} was cancelled`,
+    html: wrap(`
+      <p style="color:#222;font-size:16px;margin:0 0 8px">Hi ${escapeHtml(firstName)},</p>
+      <p style="color:#667085;font-size:15px;margin:0 0 16px">
+        We're sorry: your order from <strong style="color:#222">${escapeHtml(storeName)}</strong> was cancelled. ${escapeHtml(reason)}
+      </p>
+      <p style="color:#667085;font-size:15px;margin:0 0 24px">${money}</p>
+      ${button(`${frontend}/explore`, 'Order from another store')}
+    `),
+  });
+};
+
 module.exports = {
+  sendOrderCancelledEmail,
   sendPersonalCodeEmail,
   verifyMailer,
   sendContactNotification,
