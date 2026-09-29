@@ -294,6 +294,8 @@ const runOrderTimers = async () => {
     await releaseLateRiders(now);
     // Running-late alerts (prep, no rider, stalled delivery) — utils/orderAlerts.js
     await require('./orderAlerts').runOrderAlerts(now);
+    // Birthday codes (does real work at most once an hour) — utils/birthdays.js
+    await require('./birthdays').runBirthdays().catch((err) => console.error('Birthday codes failed:', err.message));
   } catch (err) {
     console.error('Order timers failed (will try again next minute):', err.message);
   } finally {

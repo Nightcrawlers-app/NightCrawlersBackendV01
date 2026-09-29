@@ -57,6 +57,7 @@ publicRouter.post('/code', optionalAuth, codeLimit, async (req, res) => {
           return res.status(403).json({ message: "This code isn't linked to your account." });
         }
         if (personal.usedAt) return res.status(400).json({ message: "You've already used this code." });
+        if (personal.expiresAt && personal.expiresAt < new Date()) return res.status(400).json({ message: 'This code has expired.' });
         promo = await Promotion.findById(personal.promotionId);
       }
     }
@@ -120,7 +121,7 @@ const EDITABLE = [
   'title', 'subtitle', 'badge', 'imageUrl', 'discountType', 'discountValue', 'maxDiscount',
   'minOrderAmount', 'scope', 'businessType', 'storeIds', 'itemKeywords', 'fundedBy', 'startsAt', 'endsAt',
   'isActive', 'priority', 'code', 'audience', 'usageLimit', 'perCustomerLimit', 'listed',
-  'customerIds', 'isCampaign',
+  'customerIds', 'isCampaign', 'birthday', 'codeValidDays',
 ];
 
 /** Pick allowed fields and check the combination makes sense. Returns [data, error]. */
@@ -170,6 +171,12 @@ const readPromotion = (body, existing = {}) => {
     data.customerIds = [...new Set(data.customerIds.map(String))].slice(0, 200);
   }
   const final = { ...existing, ...data };
+  if (final.birthday && !final.isCampaign) data.birthday = false; // birthday promos are personal-code campaigns
+  if (data.codeValidDays !== undefined) {
+    const d = Math.floor(Number(data.codeValidDays));
+    if (!(d >= 1 && d <= 60)) return [null, 'Birthday codes can last 1 to 60 days.'];
+    data.codeValidDays = d;
+  }
   if (final.isCampaign) {
     // Each customer gets their own code instead of a shared one.
     data.code = null;
@@ -294,6 +301,8 @@ adminRouter.get('/:id/codes', async (req, res) => {
       id: String(c._id),
       code: c.code,
       usedAt: c.usedAt,
+      expiresAt: c.expiresAt,
+      issuedAt: c.issuedAt,
       orderId: c.orderId ? String(c.orderId) : null,
       emailedAt: c.emailedAt,
       createdAt: c.createdAt,

@@ -65,6 +65,13 @@ const UserSchema = new mongoose.Schema(
       deliveryCredit: { type: Number, default: 0, min: 0 },   // ₦, pays delivery fees only
       freeDeliveries: { type: Number, default: 0, min: 0 },   // vouchers
     },
+    // Birthday: day and month only (no year — we don't need their age). Set
+    // once by the customer; changing it needs support, so it can't be moved
+    // around to collect extra birthday codes.
+    birthday: {
+      day: { type: Number, min: 1, max: 31, default: null },
+      month: { type: Number, min: 1, max: 12, default: null },
+    },
     // Their own code to share, and who referred them (if anyone).
     referralCode: { type: String, default: null, uppercase: true, trim: true },
     referredBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
@@ -144,6 +151,7 @@ UserSchema.methods.toSafeJSON = function () {
       ? { latitude: point.coordinates[1], longitude: point.coordinates[0] }
       : { latitude: null, longitude: null };
   Object.assign(obj, toLatLng(obj.coordinates));
+  obj.birthday = obj.birthday?.day && obj.birthday?.month ? { day: obj.birthday.day, month: obj.birthday.month } : null;
   obj.favoriteStores = (obj.favoriteStores || []).map(String);
   obj.favoriteOrders = (obj.favoriteOrders || []).map(String);
   obj.referredBy = obj.referredBy ? String(obj.referredBy) : null;

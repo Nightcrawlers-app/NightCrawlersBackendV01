@@ -58,6 +58,22 @@ router.patch('/me', async (req, res) => {
     const current = await User.findById(req.user.id);
     if (!current) return res.status(404).json({ message: 'User not found' });
 
+    // Birthday: { day, month }. Can be set once (changes go through support).
+    if (req.body.birthday !== undefined) {
+      const { day, month } = req.body.birthday || {};
+      const d = Number(day);
+      const m = Number(month);
+      const daysIn = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+      if (!(Number.isInteger(m) && m >= 1 && m <= 12 && Number.isInteger(d) && d >= 1 && d <= daysIn[m - 1])) {
+        return res.status(400).json({ message: 'Choose a real date for your birthday.' });
+      }
+      const has = current.birthday?.day && current.birthday?.month;
+      if (has && (current.birthday.day !== d || current.birthday.month !== m)) {
+        return res.status(400).json({ message: 'Your birthday is already set. Contact us if it needs correcting.' });
+      }
+      updates.birthday = { day: d, month: m };
+    }
+
     // Changing the phone number means the old verification no longer applies.
     if (updates.phone !== undefined && updates.phone !== current.phone) {
       updates.phoneVerified = false;
@@ -280,7 +296,11 @@ router.get('/me/codes', async (req, res) => {
     const Promotion = require('../models/promotionModel');
     const PersonalCode = require('../models/personalCodeModel');
     const [mine, restricted] = await Promise.all([
-      PersonalCode.find({ customerId: req.user.id, usedAt: null }),
+      PersonalCode.find({
+        customerId: req.user.id,
+        usedAt: null,
+        $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }],
+      }),
       Promotion.findLive().where({ customerIds: req.user.id, code: { $ne: null } }),
     ]);
     const campaigns = await Promotion.findLive().where({ _id: { $in: mine.map((c) => c.promotionId) } });
@@ -302,7 +322,15 @@ router.get('/me/codes', async (req, res) => {
       endsAt: p.endsAt,
     });
     const out = [
-      ...mine.filter((c) => byId.has(String(c.promotionId))).map((c) => shape(byId.get(String(c.promotionId)), c.code, 'personal')),
+      ...mine
+        .filter((c) => byId.has(String(c.promotionId)))
+        .map((c) => {
+          const p = byId.get(String(c.promotionId));
+          const out = shape(p, c.code, p.birthday ? 'birthday' : 'personal');
+          // Whichever comes first: the code's own expiry or the promo's end
+          if (c.expiresAt && (!out.endsAt || c.expiresAt < out.endsAt)) out.endsAt = c.expiresAt;
+          return out;
+        }),
       ...(await Promise.all(
         restricted.map(async (p) => ((await p.customerIneligibleReason(req.user.id)) ? null : shape(p, p.code, 'account')))
       )).filter(Boolean),

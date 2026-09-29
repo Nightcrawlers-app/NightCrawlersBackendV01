@@ -61,6 +61,10 @@ const PromotionSchema = new mongoose.Schema(
     listed: { type: Boolean, default: true },
     customerIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     isCampaign: { type: Boolean, default: false },
+    // Personal-code campaign sent automatically on each customer's birthday
+    // (utils/birthdays.js). Each code works for codeValidDays days.
+    birthday: { type: Boolean, default: false },
+    codeValidDays: { type: Number, default: 7, min: 1, max: 60 },
 
     startsAt: { type: Date, default: null },
     endsAt: { type: Date, default: null },
@@ -234,6 +238,7 @@ PromotionSchema.methods.checkCode = async function (typed, customerId) {
     if (!pc) return { reason: "That code isn't valid." };
     if (String(pc.customerId) !== String(customerId)) return { reason: "This code isn't linked to your account." };
     if (pc.usedAt) return { reason: "You've already used this code." };
+    if (pc.expiresAt && new Date(pc.expiresAt) < new Date()) return { reason: 'This code has expired.' };
     return { reason: null, personalCode: pc };
   }
   if (this.code && code !== this.code) return { reason: 'Enter the promo code to use this promo.' };

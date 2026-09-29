@@ -18,6 +18,11 @@ const PersonalCodeSchema = new mongoose.Schema(
     usedAt: { type: Date, default: null },
     orderId: { type: mongoose.Schema.Types.ObjectId, ref: 'Order', default: null },
     emailedAt: { type: Date, default: null },
+    // When this code stops working (birthday codes: a week). null = when the promo ends.
+    expiresAt: { type: Date, default: null },
+    // When it was (last) given out. Birthday codes are re-issued each year by
+    // refreshing this same record with a new code.
+    issuedAt: { type: Date, default: Date.now },
   },
   { timestamps: true }
 );

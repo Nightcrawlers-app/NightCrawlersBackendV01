@@ -187,3 +187,12 @@ New `utils/orderAlerts.js`, run every minute with the order timers. These never 
   - The tracking payload has `rating` and `canRate`.
 - **Delivery times.** Store JSON now has `etaMinutes: { min, max }`, calculated with `estimateForStore()` in `utils/orderEta.js`: the prep time for the store's category plus the rider's pickup and ride. The store list uses the customer's real distance when it knows it, and `/api/orders/delivery-estimate` also returns `etaMinutes`.
 - New `tests/ratings.test.js`, which uses its own database.
+
+---
+
+# Birthday promo codes (seventh round)
+- **Birthdays on customers.** Customers now have `birthday: { day, month }`, with no year. They set it with `PATCH /api/users/me { birthday }`, only once; changing it afterwards needs support, so it can't be moved to collect extra codes. 29 February birthdays are celebrated on 28 February in other years.
+- **Birthday promos.** New promo fields `birthday` and `codeValidDays` (default 7) turn a personal-code campaign into a birthday promo.
+- **Daily codes.** `utils/birthdays.js` runs from the timer loop at most once an hour. On a customer's birthday (Nigerian time) it gives them their own single-use code (e.g. ADA-HBD7K2), valid for `codeValidDays`, and sends it by email and SMS (turn the SMS off with `BIRTHDAY_SMS=false`). Each customer gets at most one per year; the same record is refreshed each year with a new code.
+- **Code expiry.** Personal codes can now carry their own `expiresAt`, which is checked at checkout, by code lookup and in `/me/codes`.
+- New `tests/birthdays.test.js`, which uses its own database.
